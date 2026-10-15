@@ -113,8 +113,9 @@ Schema Definition → Data Loading → Generator Execution → Transform Process
 ### Infrahub release automation
 
 `.github/workflows/update-infrahub.yml` answers a `repository_dispatch` from
-`opsmill/infrahub` or `infrahub-sdk-python`, bumps the specifier on an
-`update-infrahub-<version>` branch and opens a PR, whose CI is the QA for that release. It
+`opsmill/infrahub` or `infrahub-sdk-python`, moves the pins in place with
+`scripts/update_infrahub_pins.py` on an `update-infrahub-<version>` (or
+`update-infrahub-sdk-<version>`) branch and opens a PR, whose CI is the QA for that release. It
 serves both pipelines -- there is no `update-infrahub-sdk.yml` -- and also runs by hand from
 the Actions tab.
 

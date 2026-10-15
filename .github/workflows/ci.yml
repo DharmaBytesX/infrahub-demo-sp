@@ -43,6 +43,7 @@ jobs:
       dependencies: ${{ steps.changes.outputs.dependencies_all }}
       integration_scope: ${{ steps.scope.outputs.scope }}
       run_full: ${{ steps.scope.outputs.run_full }}
+      infrahub_bump: ${{ steps.scope.outputs.infrahub_bump }}
     steps:
       - name: "Check out repository code"
         uses: "actions/checkout@v7"
@@ -60,6 +61,12 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
         run: |
           SCOPE="core"
+          # An Infrahub bump without an infrahub-sdk change runs the full suite once, instead of core then full.
+          INFRAHUB_BUMP="false"
+          case "${HEAD_REF}" in
+            update-infrahub-sdk-*|*-sdk-*) ;;
+            update-infrahub-*) INFRAHUB_BUMP="true" ;;
+          esac
           if [ -n "${DISPATCH_TIER}" ]; then
             SCOPE="${DISPATCH_TIER}"
           elif [ "${HEAD_REF#update-infrahub-sdk-}" = "${HEAD_REF}" ] && [ "${HEAD_REF#update-infrahub-}" != "${HEAD_REF}" ]; then
@@ -68,6 +75,7 @@ jobs:
           {
             echo "scope=${SCOPE}"
             echo "run_full=$([ "${SCOPE}" = "full" ] && echo true || echo false)"
+            echo "infrahub_bump=${INFRAHUB_BUMP}"
           } >> "$GITHUB_OUTPUT"
           echo "Integration scope selected -> ${SCOPE}"
 
@@ -172,6 +180,7 @@ jobs:
           fi
           echo "PYTEST_DEBUG_TEMPROOT=/var/lib/github/${RUNNER_NAME/ghrunner/ghrunner_}/_temp" >> "$GITHUB_ENV"
       - name: "Run the core integration tier (blocking)"
+        if: needs.files-changed.outputs.infrahub_bump != 'true'
         run: exec tini -s -g -- uv run invoke test-integration --tier=core
       - name: "Run the full integration tier (blocking for Infrahub bumps)"
         id: full
@@ -186,11 +195,16 @@ jobs:
         if: always() && needs.files-changed.outputs.run_full == 'true'
         env:
           OUTCOME: ${{ steps.full.outcome }}
+          INFRAHUB_BUMP: ${{ needs.files-changed.outputs.infrahub_bump }}
         run: |
           {
             echo "### Integration tiers"
             echo ""
-            echo "- **core** (blocking): this job's own conclusion is the merge gate."
+            if [ "${INFRAHUB_BUMP}" = "true" ]; then
+              echo "- **core**: not run separately; the full tier includes it."
+            else
+              echo "- **core** (blocking): this job's own conclusion is the merge gate."
+            fi
             echo "- **full** (blocking for Infrahub bumps, advisory otherwise): \`${OUTCOME}\`"
             if [ "${OUTCOME}" = "failure" ]; then
               echo ""
