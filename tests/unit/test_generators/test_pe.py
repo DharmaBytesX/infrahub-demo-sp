@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from generators.common import find_or_claim_core_interface
+from generators.generate_l3vpn import L3VpnGenerator
 from generators.generate_pe import PeOnboardingGenerator
 
 LOOPBACKS = {
@@ -197,9 +199,15 @@ async def test_first_run_materialises_everything() -> None:
 
     # Uplinks in sorted order: Ethernet1 faces pe-02, Ethernet2 faces pe-07.
     ports = _creates(client, "InterfacePhysical")
-    assert [(p["name"], p["description"], p["role"], p["mtu"]) for p in ports] == [
+    core_ports = [port for port in ports if port["role"] == "core"]
+    assert [(p["name"], p["description"], p["role"], p["mtu"]) for p in core_ports] == [
         ("Ethernet1", "To pe-02", "core", 9000),
         ("Ethernet2", "To pe-07", "core", 9000),
+    ]
+    spare_ports = [port for port in ports if port["status"] == "free"]
+    assert [(port["name"], port["role"], port["mtu"]) for port in spare_ports] == [
+        ("Ethernet3", "cust", 1500),
+        ("Ethernet4", "cust", 1500),
     ]
     assert [c.kwargs["identifier"] for c in alloc.await_args_list] == [
         "pe-onboarding-req-1-pe-02",
@@ -291,3 +299,55 @@ async def test_second_run_adopts_existing_nodes_and_resaves_them() -> None:
     assert existing_ip.save.await_count == 4
     # Sessions are upserts keyed by [device, description], so they are always re-created.
     assert len(_creates(client, "RoutingBGPSession")) == 4
+
+
+@pytest.mark.asyncio
+async def test_spare_ports_support_services_and_uplinks_and_keep_claims_on_rerun() -> None:
+    """Consume the new ports through both allocators, then rerun without freeing them."""
+    gen, client = _make_gen(_request())
+    device = _node(id="dev-9", name="pe-09")
+    ports: dict[str, MagicMock] = {}
+
+    async def stored_ports(**kwargs: Any) -> list[MagicMock]:
+        return [
+            port
+            for port in ports.values()
+            if all(
+                getattr(port, key.removesuffix("__value")).value == value
+                for key, value in kwargs.items()
+                if key in {"name__value", "description__value", "status__value"}
+            )
+        ]
+
+    async def create_port(**kwargs: Any) -> MagicMock:
+        port = _node(
+            **{key: kwargs[key] for key in ("name", "description", "status", "role", "mtu")}
+        )
+        ports[kwargs["name"]] = port
+        return port
+
+    client.filters = AsyncMock(side_effect=stored_ports)
+    client.create = AsyncMock(side_effect=create_port)
+    await gen._ensure_spare_interfaces(device, uplink_count=2)
+
+    service = L3VpnGenerator.__new__(L3VpnGenerator)
+    service.client, service.branch = client, gen.branch
+    service._claimed_pe_ports = set()
+    customer_port = await service._ensure_pe_interface(
+        {"pe_device": {"node": {"name": {"value": "pe-09"}}}},
+        {"name": {"value": "new-vpn"}},
+    )
+    core_port = await find_or_claim_core_interface(client, "pe-09", "To pe-10", gen.branch)
+    for port in ports.values():
+        port.save.reset_mock()
+    await gen._ensure_spare_interfaces(device, uplink_count=2)
+
+    assert customer_port is ports["Ethernet3"]
+    assert customer_port.status.value == "active" and customer_port.role.value == "cust"
+    assert customer_port.description.value == "L3VPN new-vpn"
+    assert core_port is ports["Ethernet4"]
+    assert core_port.status.value == "active" and core_port.role.value == "core"
+    assert core_port.description.value == "To pe-10" and core_port.mtu.value == 9000
+    assert client.create.await_count == 2
+    for port in ports.values():
+        port.save.assert_awaited_once_with(allow_upsert=True)

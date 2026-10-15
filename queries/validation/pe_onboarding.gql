@@ -3,6 +3,8 @@ query PeOnboardingCheck($name: String!) {
     edges {
       node {
         name { value }
+        status { value }
+        device { node { name { value } } }
         backbone {
           node {
             name { value }
@@ -31,4 +33,6 @@ query PeOnboardingCheck($name: String!) {
       }
     }
   }
+  InterfacePhysical(device__name__value: $name, role__value: "core") { count }
+  RoutingBGPSession(device__name__value: $name, session_type__value: "INTERNAL") { count }
 }

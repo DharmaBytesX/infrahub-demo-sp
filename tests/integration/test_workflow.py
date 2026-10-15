@@ -752,6 +752,7 @@ class TestSpDemoWorkflow(TestInfrahubDockerWithClient):
                       __typename
                       name { value }
                       role { value }
+                      status { value }
                       ... on InterfaceVirtual {
                         ip_addresses { edges { node { address { value } } } }
                       }
@@ -881,6 +882,14 @@ class TestSpDemoWorkflow(TestInfrahubDockerWithClient):
             if i["__typename"] == "InterfacePhysical" and i["role"]["value"] == "core"
         }
         assert sorted(core) == ["Ethernet1", "Ethernet2"], core
+        spare_ports = [
+            interface["name"]["value"]
+            for interface in interfaces
+            if interface["__typename"] == "InterfacePhysical"
+            and interface["status"]["value"] == "free"
+            and interface["role"]["value"] == "cust"
+        ]
+        assert sorted(spare_ports) == ["Ethernet3", "Ethernet4"], interfaces
 
         claimed = {
             c["node"]["device"]["node"]["name"]["value"]: c["node"]

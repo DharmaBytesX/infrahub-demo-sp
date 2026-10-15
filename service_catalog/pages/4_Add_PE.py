@@ -9,7 +9,7 @@ import uuid
 
 import streamlit as st
 from utils import client_for, run_async
-from utils.validators import pe_is_materialised, validate_add_pe_form
+from utils.validators import PE_PLATFORMS, pe_is_materialised, validate_add_pe_form
 
 # What the generator writes for a request, read back to tell "finished" from
 # "started". Requested by name so it works on the branch where the request was
@@ -58,6 +58,8 @@ site_options = {f"{s.name.value} ({s.shortname.value})": s.shortname.value for s
 platforms = run_async(client_main.all(kind="DcimPlatform"))
 platform_options = {}
 for platform in platforms:
+    if platform.name.value not in PE_PLATFORMS:
+        continue
     lab = platform.containerlab_os.value if platform.containerlab_os else None
     label = f"{platform.name.value} ({'lab image: ' + lab if lab else 'no lab image'})"
     platform_options[label] = platform.name.value
@@ -88,6 +90,7 @@ with st.form("add_pe"):
 if submitted:
     errors = validate_add_pe_form(
         name=name,
+        platform=platform_options[platform_label],
         existing_device_names=existing_device_names,
         uplinks=uplinks,
         backbone_pes=set(candidate_uplinks),
@@ -156,13 +159,15 @@ if submitted:
             if stable < REQUIRED_STABLE_PASSES:
                 time.sleep(3)
         if stable < REQUIRED_STABLE_PASSES:
-            st.warning(
+            st.error(
                 f"The PE generator did not finish within {GENERATOR_WAIT_SECONDS}s, so the "
-                "device, links and iBGP sessions may be incomplete and the proposed change "
-                "may show no config diff. Check that `trigger-pe-generator` exists "
+                "device, links and iBGP sessions may be incomplete. No proposed change "
+                f"was opened. Branch `{branch_name}` is preserved for inspection. "
+                "Check that `trigger-pe-generator` exists "
                 "(objects/events/00_triggers.yml is loaded by `invoke bootstrap`) and see "
                 "the task-worker logs: `docker compose -p sp-demo logs task-worker --tail 200`."
             )
+            st.stop()
 
         # Re-render every artifact on the branch so the proposed change shows the
         # new PE's config, every neighbour's new session and the lab topology.

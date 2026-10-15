@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from service_catalog.utils.validators import pe_is_materialised, validate_add_pe_form
+import pytest
+
+from generators.generate_pe import PLATFORM_GROUP
+from service_catalog.utils.validators import PE_PLATFORMS, pe_is_materialised, validate_add_pe_form
 
 BACKBONE = {"pe-01", "pe-02", "pe-07"}
 EXISTING = {"pe-01", "pe-02", "pe-07", "ce-trading-lon"}
@@ -11,6 +14,7 @@ EXISTING = {"pe-01", "pe-02", "pe-07", "ce-trading-lon"}
 def _errors(**overrides: object) -> list[str]:
     args: dict = {
         "name": "pe-09",
+        "platform": "arista_eos",
         "existing_device_names": EXISTING,
         "uplinks": ["pe-02", "pe-07"],
         "backbone_pes": BACKBONE,
@@ -44,6 +48,15 @@ def test_self_uplink_rejected() -> None:
 def test_uplink_outside_backbone_rejected() -> None:
     errors = _errors(uplinks=["pe-02", "pe-99"])
     assert any("Not in the selected backbone: pe-99" in e for e in errors)
+
+
+@pytest.mark.parametrize("platform", ["cisco_viptela", "versa_flexvnf", "vyos"])
+def test_unsupported_platform_rejected(platform: str) -> None:
+    assert any("Unsupported PE platform" in error for error in _errors(platform=platform))
+
+
+def test_catalog_platforms_match_generator_support() -> None:
+    assert PE_PLATFORMS == set(PLATFORM_GROUP)
 
 
 def _request(status: str = "active", device: bool = True) -> dict:

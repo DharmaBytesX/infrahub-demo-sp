@@ -44,6 +44,7 @@ LOG = logging.getLogger(__name__)
 LOOPBACK_POOL = "pe_loopback_pool"
 P2P_POOL = "backbone_p2p_pool"
 CORE_MTU = 9000
+SPARE_PORT_COUNT = 2
 MIN_UPLINKS = 2
 ADDRESS_FAMILIES = ["vpnv4", "vpnv6"]
 # platform name -> artifact target group, as declared in objects/55_groups.yml
@@ -93,6 +94,7 @@ class PeOnboardingGenerator(InfrahubGenerator):
         await self._ensure_processes(device, backbone, str(loopback_ip.address.value))
         for index, uplink in enumerate(uplinks, start=1):
             await self._ensure_uplink(device, name, uplink, index, request["id"])
+        await self._ensure_spare_interfaces(device, len(uplinks))
         await self._ensure_ibgp_mesh(device, name, loopback_ip, backbone_as_id)
         await self._ensure_memberships(device, platform, backbone["id"])
 
@@ -256,6 +258,39 @@ class PeOnboardingGenerator(InfrahubGenerator):
         )
         await self._ensure_address(f"{network[0]}/31", local_iface)
         await self._ensure_address(f"{network[1]}/31", remote_iface)
+
+    async def _ensure_spare_interfaces(self, device: Any, uplink_count: int) -> None:
+        """Provision two spare ports for services or later backbone links.
+
+        Existing ports are re-saved unchanged: another generator may already
+        have claimed them, and resetting them to free would allow double use.
+
+        Args:
+            device: The new PE's DcimDevice node.
+            uplink_count: Number of ports reserved for this request's uplinks.
+        """
+        for index in range(uplink_count + 1, uplink_count + SPARE_PORT_COUNT + 1):
+            name = f"Ethernet{index}"
+            existing = await self.client.filters(
+                kind="InterfacePhysical",
+                device__name__value=device.name.value,
+                name__value=name,
+                branch=self.branch,
+            )
+            if existing:
+                await touch(existing[0])
+                continue
+            iface = await self.client.create(
+                kind="InterfacePhysical",
+                branch=self.branch,
+                name=name,
+                description="Customer-facing (free)",
+                mtu=1500,
+                status="free",
+                role="cust",
+                device=device,
+            )
+            await iface.save(allow_upsert=True)
 
     async def _ensure_address(self, address: str, iface: Any) -> Any:
         """Create or re-save an IpamIPAddress bound to ``iface``.

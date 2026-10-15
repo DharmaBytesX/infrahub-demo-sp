@@ -42,6 +42,7 @@ class PeOnboardingCheck(InfrahubCheck):
             }
             uplinks = [up["node"] for up in (request.get("uplinks") or {}).get("edges", [])]
             uplink_names = [up["name"]["value"] for up in uplinks]
+            self._validate_materialisation(request, backbone_pes, set(uplink_names), data)
 
             if len(set(uplink_names)) < MIN_UPLINKS:
                 self.log_error(
@@ -53,6 +54,31 @@ class PeOnboardingCheck(InfrahubCheck):
                 self.log_error(message=f"{name}: cannot uplink to itself")
             for uplink in uplinks:
                 self._validate_uplink(name, uplink, backbone_name, backbone_pes)
+
+    def _validate_materialisation(
+        self,
+        request: dict[str, Any],
+        backbone_pes: set[str],
+        uplinks: set[str],
+        data: dict[str, Any],
+    ) -> None:
+        """Reject a request whose generator has not completed before merge.
+
+        Allow additional core links: a later onboarding can claim a spare port
+        on an already-onboarded PE without invalidating its original request.
+        """
+        name = request["name"]["value"]
+        device = (request.get("device") or {}).get("node")
+        core_count = int((data.get("InterfacePhysical") or {}).get("count", 0))
+        session_count = int((data.get("RoutingBGPSession") or {}).get("count", 0))
+        if (
+            _value(request, "status") != "active"
+            or _value(device, "name") != name
+            or name not in backbone_pes
+            or core_count < len(uplinks)
+            or session_count < len(backbone_pes - {name})
+        ):
+            self.log_error(message=f"{name}: PE onboarding is not fully materialised")
 
     def _validate_uplink(
         self,

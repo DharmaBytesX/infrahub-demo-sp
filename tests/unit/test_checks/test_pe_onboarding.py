@@ -34,12 +34,15 @@ def _data(name: str = "pe-09", uplinks: list[dict] | None = None, backbone_pes: 
                 {
                     "node": {
                         "name": {"value": name},
+                        "status": {"value": "active"},
+                        "device": {"node": {"name": {"value": name}}},
                         "backbone": {
                             "node": {
                                 "name": {"value": "mpls-backbone-1"},
                                 "pes": {
                                     "edges": [
-                                        {"node": {"name": {"value": pe}}} for pe in backbone_pes
+                                        {"node": {"name": {"value": pe}}}
+                                        for pe in (*backbone_pes, name)
                                     ]
                                 },
                             }
@@ -48,7 +51,9 @@ def _data(name: str = "pe-09", uplinks: list[dict] | None = None, backbone_pes: 
                     }
                 }
             ]
-        }
+        },
+        "InterfacePhysical": {"count": len(uplinks or [])},
+        "RoutingBGPSession": {"count": len(backbone_pes)},
     }
 
 
@@ -121,3 +126,26 @@ async def test_port_already_claimed_for_this_pe_passes() -> None:
 @pytest.mark.asyncio
 async def test_empty_data_produces_no_errors() -> None:
     assert await _errors({"TopologyPeOnboarding": {"edges": []}}) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["active_status", "device", "core_ports", "sessions"])
+async def test_incomplete_generation_fails(missing: str) -> None:
+    data = _data(uplinks=[_uplink("pe-02"), _uplink("pe-07")], backbone_pes=("pe-02", "pe-07"))
+    request = data["TopologyPeOnboarding"]["edges"][0]["node"]
+    if missing == "active_status":
+        request["status"]["value"] = "draft"
+    elif missing == "device":
+        request["device"]["node"] = None
+    elif missing == "core_ports":
+        data["InterfacePhysical"]["count"] = 1
+    else:
+        data["RoutingBGPSession"]["count"] = 1
+    assert any("not fully materialised" in error for error in await _errors(data))
+
+
+@pytest.mark.asyncio
+async def test_later_core_links_do_not_invalidate_an_existing_request() -> None:
+    data = _data(uplinks=[_uplink("pe-02"), _uplink("pe-07")], backbone_pes=("pe-02", "pe-07"))
+    data["InterfacePhysical"]["count"] = 3
+    assert await _errors(data) == []

@@ -260,11 +260,15 @@ def sdwan_edges_awaiting_artifacts(
 
 PE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}$")
 MIN_PE_UPLINKS = 2
+# Keep aligned with the PE generator's artifact groups. The catalog is also
+# deployed on its own, without the generators package.
+PE_PLATFORMS = frozenset({"arista_eos", "cisco_iosxr", "juniper_junos", "nokia_sros"})
 
 
 def validate_add_pe_form(
     *,
     name: str,
+    platform: str,
     existing_device_names: set[str],
     uplinks: list[str],
     backbone_pes: set[str],
@@ -276,6 +280,7 @@ def validate_add_pe_form(
 
     Args:
         name: Device name the operator typed.
+        platform: Platform selected for the new PE.
         existing_device_names: Names of every DcimDevice on the default branch.
         uplinks: Names of the PEs the operator picked as uplinks.
         backbone_pes: Names of the PEs in the selected backbone.
@@ -284,6 +289,8 @@ def validate_add_pe_form(
         A list of error message strings; empty list means the form is valid.
     """
     errors: list[str] = []
+    if platform not in PE_PLATFORMS:
+        errors.append(f"Unsupported PE platform: {platform}.")
     if not PE_NAME_PATTERN.match(name or ""):
         errors.append("Name must be lowercase letters, digits and hyphens, for example pe-09.")
     if name in existing_device_names:
