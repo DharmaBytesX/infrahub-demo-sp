@@ -1,0 +1,34 @@
+query PeOnboardingCheck($name: String!) {
+  TopologyPeOnboarding(name__value: $name) {
+    edges {
+      node {
+        name { value }
+        backbone {
+          node {
+            name { value }
+            pes { edges { node { name { value } } } }
+          }
+        }
+        uplinks {
+          edges {
+            node {
+              name { value }
+              role { value }
+              interfaces {
+                edges {
+                  node {
+                    __typename
+                    ... on InterfacePhysical {
+                      status { value }
+                      description { value }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
