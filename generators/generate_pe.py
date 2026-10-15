@@ -89,7 +89,8 @@ class PeOnboardingGenerator(InfrahubGenerator):
 
         device = await self._ensure_device(request, backbone_as_id)
         loopback_ip = await self._ensure_loopback(device, request["id"])
-        await self._ensure_processes(device, backbone, loopback_ip.address.value)
+        # The SDK hands IP attributes back as ipaddress objects, not strings.
+        await self._ensure_processes(device, backbone, str(loopback_ip.address.value))
         for index, uplink in enumerate(uplinks, start=1):
             await self._ensure_uplink(device, name, uplink, index, request["id"])
         await self._ensure_ibgp_mesh(device, name, loopback_ip, backbone_as_id)
@@ -237,7 +238,7 @@ class PeOnboardingGenerator(InfrahubGenerator):
         prefix.description.value = f"{name} <-> {uplink}"
         prefix.role.value = "technical"
         await prefix.save(allow_upsert=True)
-        network = ipaddress.IPv4Network(prefix.prefix.value)
+        network = ipaddress.IPv4Network(str(prefix.prefix.value))
 
         local_iface = await self.client.create(
             kind="InterfacePhysical",

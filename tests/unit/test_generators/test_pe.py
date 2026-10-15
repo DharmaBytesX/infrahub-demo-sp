@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -110,7 +111,8 @@ def _make_gen(
     client.create = AsyncMock(side_effect=_create)
     client.get = AsyncMock(side_effect=_get)
     client.allocate_next_ip_address = AsyncMock(
-        return_value=_node(id="ip-9", address="10.0.0.9/32")
+        # The real SDK returns ipaddress objects for IP attributes, not strings.
+        return_value=_node(id="ip-9", address=ipaddress.IPv4Interface("10.0.0.9/32"))
     )
 
     gen = PeOnboardingGenerator.__new__(PeOnboardingGenerator)
@@ -125,7 +127,9 @@ def _creates(client: MagicMock, kind: str) -> list[dict[str, Any]]:
 
 
 def _prefix(network: str) -> MagicMock:
-    return _node(id=f"prefix-{network}", prefix=network, description="", role="")
+    return _node(
+        id=f"prefix-{network}", prefix=ipaddress.IPv4Network(network), description="", role=""
+    )
 
 
 @pytest.mark.asyncio
