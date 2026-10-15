@@ -12,7 +12,8 @@ data by the `clab_topology` transform and renders a valid containerlab YAML
 topology. It wires up the lab-deployable PE nodes plus the L3VPN CE nodes for
 end-to-end testing. The backbone links are **data-driven** — derived from the
 shared /31 addressing rather than fixed in the template — so the lab tracks
-whatever backbone the active dataset defines.
+whatever backbone the active dataset defines, including a PE merged through
+the [Add a PE router](../backbone/add-pe.mdx) flow.
 
 Which PEs are deployable depends on the dataset:
 

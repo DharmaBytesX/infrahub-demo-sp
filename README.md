@@ -34,7 +34,8 @@ the step-by-step walkthrough.
 ## What's inside
 
 - **Service Catalog** (Streamlit, port 8501): wizards for creating L3VPNs
-  and SD-WAN services, a Dashboard view of existing services, and a
+  and SD-WAN services, an **Add PE** page that onboards a PE router to the
+  backbone as a proposed change, a Dashboard view of existing services, and a
   **Batfish Check** page that runs static config validation against the
   rendered MPLS backbone and shows findings per query.
 - **Per-vendor config rendering**: one transform + Jinja2 template per
