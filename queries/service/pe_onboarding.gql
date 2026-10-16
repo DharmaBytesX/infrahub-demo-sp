@@ -3,7 +3,7 @@
 # It must never return `device` (the DcimDevice the generator creates) or the
 # backbone's `pes` (which the generator adds that device to), or the generator's
 # query group tracks its own output and destabilises inside the proposed-change
-# pipeline — see tests/catalog/test_pe_generator_registration.py. Everything
+# pipeline — see tests/unit/test_catalog/test_pe_generator_registration.py. Everything
 # else the generator needs (the other PEs' loopbacks) is read through the SDK.
 query PeOnboarding($name: String!) {
   TopologyPeOnboarding(name__value: $name) {

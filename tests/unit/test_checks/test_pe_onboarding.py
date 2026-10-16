@@ -149,3 +149,13 @@ async def test_later_core_links_do_not_invalidate_an_existing_request() -> None:
     data = _data(uplinks=[_uplink("pe-02"), _uplink("pe-07")], backbone_pes=("pe-02", "pe-07"))
     data["InterfacePhysical"]["count"] = 3
     assert await _errors(data) == []
+
+
+@pytest.mark.asyncio
+async def test_decommissioned_request_is_skipped() -> None:
+    """A retired request must not fail later proposed changes, even though it is incomplete."""
+    data = _data(uplinks=[_uplink("pe-02")], backbone_pes=())
+    request = data["TopologyPeOnboarding"]["edges"][0]["node"]
+    request["status"]["value"] = "decommissioned"
+    request["device"]["node"] = None
+    assert await _errors(data) == []

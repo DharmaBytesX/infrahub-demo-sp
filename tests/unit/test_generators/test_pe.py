@@ -76,12 +76,14 @@ def _make_gen(
     payload: dict,
     *,
     existing_by_kind: dict[str, list[Any]] | None = None,
+    linked_device_id: str | None = None,
 ) -> tuple[PeOnboardingGenerator, MagicMock]:
     """Build a generator with a mocked client.
 
     ``client.filters`` answers per kind from ``existing_by_kind`` (default: nothing
     exists), ``client.create`` returns a fresh node per call that remembers its
-    kwargs, and ``client.get`` returns a node with ``add_relationships``.
+    kwargs, and ``client.get`` returns a node with ``add_relationships``. The
+    fetched request links to ``linked_device_id`` (default: no device yet).
     """
     client = MagicMock()
     client.fetched_nodes = []
@@ -106,6 +108,8 @@ def _make_gen(
     async def _get(**kwargs: Any) -> MagicMock:
         node = _node(id=f"get-{kwargs.get('kind')}-{kwargs.get('name__value') or kwargs.get('id')}")
         node.get_kwargs = kwargs
+        if kwargs.get("kind") == "TopologyPeOnboarding":
+            node.device.id = linked_device_id
         client.fetched_nodes.append(node)
         return node
 
@@ -256,11 +260,13 @@ async def test_first_run_materialises_everything() -> None:
         relation_to_update="pes", related_nodes=[device_id]
     )
 
-    # The request is linked to the device and promoted to active.
+    # The request is linked to the device as soon as it exists, then promoted
+    # to active at the end: two saves.
     request_node = fetched[("TopologyPeOnboarding", "req-1")]
     assert request_node.device is client.created_devices[0]
     assert request_node.status.value == "active"
-    request_node.save.assert_awaited_once_with(allow_upsert=True)
+    assert request_node.save.await_count == 2
+    request_node.save.assert_awaited_with(allow_upsert=True)
 
 
 @pytest.mark.asyncio
@@ -276,6 +282,7 @@ async def test_second_run_adopts_existing_nodes_and_resaves_them() -> None:
             "InterfaceVirtual": [loopback_iface],
             "IpamIPAddress": [existing_ip],
         },
+        linked_device_id="dev-9",
     )
     with (
         patch(
@@ -299,6 +306,37 @@ async def test_second_run_adopts_existing_nodes_and_resaves_them() -> None:
     assert existing_ip.save.await_count == 4
     # Sessions are upserts keyed by [device, description], so they are always re-created.
     assert len(_creates(client, "RoutingBGPSession")) == 4
+
+
+@pytest.mark.asyncio
+async def test_existing_device_not_linked_to_the_request_is_not_adopted() -> None:
+    """Adopting a device the request did not create would let the reaper delete it later."""
+    device = _node(id="dev-other", name="pe-09")
+    gen, client = _make_gen(_request(), existing_by_kind={"DcimDevice": [device]})
+    with pytest.raises(RuntimeError, match="already exists and was not created by this request"):
+        await gen.generate()
+    device.save.assert_not_awaited()
+    client.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ibgp_mesh_reads_only_the_request_backbone() -> None:
+    gen, _ = _make_gen(_request())
+    with (
+        patch(
+            "generators.generate_pe.allocate_prefix_from_pool",
+            AsyncMock(side_effect=[_prefix("10.1.0.30/31"), _prefix("10.1.0.32/31")]),
+        ),
+        patch(
+            "generators.generate_pe.find_or_claim_core_interface",
+            AsyncMock(return_value=_node(id="port", name="Ethernet5")),
+        ),
+        patch(
+            "generators.generate_pe.backbone_pe_loopbacks", AsyncMock(return_value=LOOPBACKS)
+        ) as loopbacks,
+    ):
+        await gen.generate()
+    loopbacks.assert_awaited_once_with(gen.client, gen.branch, "bb-1")
 
 
 @pytest.mark.asyncio

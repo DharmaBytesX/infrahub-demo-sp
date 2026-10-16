@@ -98,18 +98,15 @@ def _pe_payload(name: str, device_id: str, *addresses: tuple[str, str]) -> dict:
 
 @pytest.mark.asyncio
 async def test_backbone_pe_loopbacks_maps_name_to_ids_and_address() -> None:
-    payload = {
-        "DcimDevice": {
-            "edges": [
-                _pe_payload("pe-01", "d1", ("ip1", "10.0.0.1/32")),
-                _pe_payload("pe-02", "d2", ("ip2", "10.0.0.2/32")),
-                _pe_payload("pe-09", "d9"),  # no address yet: skipped
-            ]
-        }
-    }
+    pes = [
+        _pe_payload("pe-01", "d1", ("ip1", "10.0.0.1/32")),
+        _pe_payload("pe-02", "d2", ("ip2", "10.0.0.2/32")),
+        _pe_payload("pe-09", "d9"),  # no address yet: skipped
+    ]
+    payload = {"TopologyMplsBackbone": {"edges": [{"node": {"pes": {"edges": pes}}}]}}
     client = MagicMock(execute_graphql=AsyncMock(return_value=payload))
 
-    result = await backbone_pe_loopbacks(client, "b")
+    result = await backbone_pe_loopbacks(client, "b", "bb-1")
 
     assert result == {
         "pe-01": ("d1", "ip1", "10.0.0.1/32"),
@@ -117,3 +114,5 @@ async def test_backbone_pe_loopbacks_maps_name_to_ids_and_address() -> None:
     }
     client.execute_graphql.assert_awaited_once()
     assert client.execute_graphql.await_args.kwargs["branch_name"] == "b"
+    # Scoped to one backbone, so a second backbone's PEs never join the mesh.
+    assert client.execute_graphql.await_args.kwargs["variables"] == {"backbone_id": "bb-1"}

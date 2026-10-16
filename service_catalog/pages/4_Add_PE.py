@@ -21,6 +21,8 @@ REQUIRED_STABLE_PASSES = 2
 # The iBGP mesh is 2 x (N - 1) session rows, so this generator takes longer than
 # the L3VPN one; the default wait is sized for a nine-PE backbone.
 GENERATOR_WAIT_SECONDS = int(os.environ.get("GENERATOR_WAIT_TIME", "180"))
+# Per artifact definition. Without a timeout one slow render blocks the page.
+ARTIFACT_REQUEST_TIMEOUT_SECONDS = 60
 
 st.title("Add PE")
 st.caption(
@@ -164,14 +166,30 @@ if submitted:
 
         # Re-render every artifact on the branch so the proposed change shows the
         # new PE's config, every neighbour's new session and the lab topology.
-        for definition in run_async(client.all(kind="CoreArtifactDefinition")):
+        definitions = run_async(client.all(kind="CoreArtifactDefinition"))
+        api_token = os.environ.get("INFRAHUB_API_TOKEN")
+        if definitions and not api_token:
+            st.error(
+                "INFRAHUB_API_TOKEN is not set, so the artifacts cannot be re-rendered. "
+                f"No proposed change was opened. Branch `{branch_name}` is preserved."
+            )
+            st.stop()
+        for definition in definitions:
             url = f"{client.address}/api/artifact/generate/{definition.id}?branch={branch_name}"
             request_obj = urllib.request.Request(
-                url,
-                method="POST",
-                headers={"X-INFRAHUB-KEY": os.environ["INFRAHUB_API_TOKEN"]},
+                url, method="POST", headers={"X-INFRAHUB-KEY": api_token or ""}
             )
-            urllib.request.urlopen(request_obj).read()
+            try:
+                with urllib.request.urlopen(
+                    request_obj, timeout=ARTIFACT_REQUEST_TIMEOUT_SECONDS
+                ) as response:
+                    response.read()
+            except OSError as exc:
+                st.error(
+                    f"Re-rendering artifact definition {definition.name.value} failed: {exc}. "
+                    f"No proposed change was opened. Branch `{branch_name}` is preserved."
+                )
+                st.stop()
 
         pc = run_async(
             client_main.create(

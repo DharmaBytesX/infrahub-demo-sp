@@ -126,3 +126,59 @@ def test_completed_generation_opens_proposed_change(
     assert client.execute_graphql.await_count == 2
     ui.stop.assert_not_called()
     ui.success.assert_called_once()
+
+
+def _completed_generation(client: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the generator poll succeed and give the page one artifact definition."""
+    client.execute_graphql = AsyncMock(
+        return_value={
+            "TopologyPeOnboarding": {
+                "edges": [
+                    {"node": {"status": {"value": "active"}, "device": {"node": {"id": "pe-09"}}}}
+                ]
+            },
+            "InterfacePhysical": {"count": 2},
+            "RoutingBGPSession": {"count": 2},
+        }
+    )
+    client.address = "http://infrahub:8000"
+    definition = SimpleNamespace(id="def-1", name=SimpleNamespace(value="pe-arista-eos-config"))
+    rows = {"CoreArtifactDefinition": [definition]}
+    previous = client.all.side_effect
+    client.all.side_effect = lambda kind: rows.get(kind) or previous(kind)
+    monkeypatch.setenv("GENERATOR_WAIT_TIME", "180")
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+
+
+def test_missing_token_stops_before_artifacts_or_proposed_change(
+    page_boundaries: tuple, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ui, client = page_boundaries
+    _completed_generation(client, monkeypatch)
+    monkeypatch.delenv("INFRAHUB_API_TOKEN", raising=False)
+    urlopen = MagicMock()
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    with pytest.raises(StopPage):
+        runpy.run_path(str(PAGE), run_name="__main__")
+    urlopen.assert_not_called()
+    assert "INFRAHUB_API_TOKEN is not set" in ui.error.call_args.args[0]
+    assert [call.kwargs["kind"] for call in client.create.await_args_list] == [
+        "TopologyPeOnboarding"
+    ]
+
+
+def test_artifact_request_failure_stops_before_proposed_change(
+    page_boundaries: tuple, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ui, client = page_boundaries
+    _completed_generation(client, monkeypatch)
+    monkeypatch.setenv("INFRAHUB_API_TOKEN", "token")
+    urlopen = MagicMock(side_effect=TimeoutError("timed out"))
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    with pytest.raises(StopPage):
+        runpy.run_path(str(PAGE), run_name="__main__")
+    assert urlopen.call_args.kwargs["timeout"] == 60
+    assert "pe-arista-eos-config failed: timed out" in ui.error.call_args.args[0]
+    assert [call.kwargs["kind"] for call in client.create.await_args_list] == [
+        "TopologyPeOnboarding"
+    ]
