@@ -175,46 +175,85 @@ def _running_infrahub_version() -> str:
         return "(server not reachable)"
 
 
-INFRAHUB_READY_TIMEOUT_SECONDS = 300
+# 150 attempts x 2s = 5 minutes. infrahub-demo-dc waits 60s; the first start after
+# pulling new images takes longer than that.
+INFRAHUB_READY_MAX_RETRIES = 150
+INFRAHUB_READY_SLEEP_SECONDS = 2
 
 
 def _infrahub_is_ready(address: str) -> bool:
-    """Return True when the Infrahub API answers ``/api/config`` with HTTP 200.
+    """Return True when the Infrahub API answers ``/api/schema`` with HTTP 200.
 
     ``docker compose up -d`` returns once containers have started, before the
     server inside is listening, so a connection error here means "not yet".
+    Same endpoint as ``check_infrahub_ready`` in infrahub-demo-dc.
     """
     import urllib.request
 
     try:
-        with urllib.request.urlopen(f"{address}/api/config", timeout=2) as resp:
+        with urllib.request.urlopen(f"{address}/api/schema", timeout=2) as resp:
             return bool(resp.status == 200)
     except Exception:
         return False
 
 
-def _wait_for_infrahub(timeout: int = INFRAHUB_READY_TIMEOUT_SECONDS) -> None:
-    """Block until the Infrahub API is ready, or exit after ``timeout`` seconds.
+def _wait_for_infrahub(
+    max_retries: int = INFRAHUB_READY_MAX_RETRIES,
+    sleep_time: int = INFRAHUB_READY_SLEEP_SECONDS,
+) -> None:
+    """Block until the Infrahub API is ready, showing a progress bar.
 
     Without this, ``invoke start bootstrap`` reaches ``infrahubctl schema load``
     seconds after the containers start and fails with "Unable to connect".
-    The first start after pulling new images is the slowest case.
+    The progress bar matches ``check_infrahub_ready`` in infrahub-demo-dc.
 
     Args:
-        timeout: Seconds to wait before giving up.
+        max_retries: Attempts before giving up.
+        sleep_time: Seconds between attempts.
 
     Raises:
-        Exit: The API did not answer within ``timeout`` seconds.
+        Exit: The API did not answer within ``max_retries * sleep_time`` seconds.
     """
     address = os.getenv("INFRAHUB_ADDRESS", "http://localhost:8000")
-    deadline = time.monotonic() + timeout
-    with console.status(f"Waiting for the Infrahub API at {address}"):
-        while not _infrahub_is_ready(address):
-            if time.monotonic() >= deadline:
-                _error(f"Infrahub API at {address} did not answer within {timeout}s")
-                raise Exit(code=1)
-            time.sleep(2)
-    _success(f"Infrahub API ready at {address}")
+    console.print()
+    with Progress(
+        SpinnerColumn(spinner_name="dots12", style="bold bright_magenta"),
+        TextColumn("[progress.description]{task.description}", style="bold white"),
+        BarColumn(
+            bar_width=60,
+            style="magenta",
+            complete_style="bright_green",
+            finished_style="bold bright_green",
+            pulse_style="bright_magenta",
+        ),
+        TextColumn("[bold bright_cyan]{task.percentage:>3.0f}%"),
+        TextColumn("•", style="dim"),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        bar = progress.add_task("→ Checking if Infrahub is ready", total=max_retries)
+        for _ in range(max_retries):
+            if _infrahub_is_ready(address):
+                progress.update(bar, completed=max_retries)
+                console.print("[bold green]✓ Infrahub is ready![/bold green]\n")
+                return
+            progress.update(bar, advance=1)
+            time.sleep(sleep_time)
+
+    console.print()
+    console.print(
+        Panel(
+            f"[red]✗ ERROR: Infrahub at {address} is not responding[/red]\n\n"
+            "[dim]Please ensure Infrahub is running with:[/dim]\n"
+            "  [bold]uv run invoke start[/bold]\n\n"
+            "[dim]Check container status with:[/dim]\n"
+            "  [bold]docker ps[/bold]",
+            title="Connection Error",
+            border_style="red",
+            box=box.SIMPLE,
+        )
+    )
+    raise Exit(code=1)
 
 
 @task

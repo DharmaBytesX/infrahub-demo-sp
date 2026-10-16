@@ -27,16 +27,16 @@ def test_the_wait_returns_once_the_api_answers() -> None:
         patch("tasks._infrahub_is_ready", side_effect=[False, False, True]) as ready,
         patch("tasks.time.sleep"),
     ):
-        _wait_for_infrahub(timeout=60)
+        _wait_for_infrahub(max_retries=10, sleep_time=0)
     assert ready.call_count == 3
 
 
 def test_the_wait_exits_when_the_api_never_answers() -> None:
-    """A server that never comes up stops bootstrap with a non-zero exit."""
+    """A server that never comes up stops bootstrap after the last attempt."""
     with (
-        patch("tasks._infrahub_is_ready", return_value=False),
+        patch("tasks._infrahub_is_ready", return_value=False) as ready,
         patch("tasks.time.sleep"),
-        patch("tasks.time.monotonic", side_effect=[0.0, 10.0, 400.0]),
         pytest.raises(Exit),
     ):
-        _wait_for_infrahub(timeout=300)
+        _wait_for_infrahub(max_retries=5, sleep_time=0)
+    assert ready.call_count == 5
