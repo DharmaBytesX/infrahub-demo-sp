@@ -175,6 +175,48 @@ def _running_infrahub_version() -> str:
         return "(server not reachable)"
 
 
+INFRAHUB_READY_TIMEOUT_SECONDS = 300
+
+
+def _infrahub_is_ready(address: str) -> bool:
+    """Return True when the Infrahub API answers ``/api/config`` with HTTP 200.
+
+    ``docker compose up -d`` returns once containers have started, before the
+    server inside is listening, so a connection error here means "not yet".
+    """
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{address}/api/config", timeout=2) as resp:
+            return bool(resp.status == 200)
+    except Exception:
+        return False
+
+
+def _wait_for_infrahub(timeout: int = INFRAHUB_READY_TIMEOUT_SECONDS) -> None:
+    """Block until the Infrahub API is ready, or exit after ``timeout`` seconds.
+
+    Without this, ``invoke start bootstrap`` reaches ``infrahubctl schema load``
+    seconds after the containers start and fails with "Unable to connect".
+    The first start after pulling new images is the slowest case.
+
+    Args:
+        timeout: Seconds to wait before giving up.
+
+    Raises:
+        Exit: The API did not answer within ``timeout`` seconds.
+    """
+    address = os.getenv("INFRAHUB_ADDRESS", "http://localhost:8000")
+    deadline = time.monotonic() + timeout
+    with console.status(f"Waiting for the Infrahub API at {address}"):
+        while not _infrahub_is_ready(address):
+            if time.monotonic() >= deadline:
+                _error(f"Infrahub API at {address} did not answer within {timeout}s")
+                raise Exit(code=1)
+            time.sleep(2)
+    _success(f"Infrahub API ready at {address}")
+
+
 @task
 def info(c: Context) -> None:
     """Show the current demo configuration."""
@@ -372,6 +414,8 @@ def bootstrap(c: Context) -> None:
     """
     paths = _dataset_files(INFRAHUB_DATASET)
     _banner(f"invoke bootstrap (dataset: {INFRAHUB_DATASET})", border="cyan")
+
+    _wait_for_infrahub()
 
     _step("Loading schemas")
     c.run("uv run infrahubctl schema load schemas/", pty=True)
