@@ -1003,6 +1003,35 @@ class TestSpDemoWorkflow(TestInfrahubDockerWithClient):
         ]
         assert len(pe_links) == len(PE_UPLINKS), f"links naming {BRANCH_PE}: {pe_links}"
 
+        # The neighbours' artifacts must carry the new session too: the Arista
+        # template reads sessions by device, so a missing reverse row shows up
+        # here as an uplink config without the new neighbour.
+        state = await self.pe_state(client, PE_BRANCH)
+        loopback = next(
+            a["node"]["address"]["value"]
+            for i in state["DcimDevice"]["edges"][0]["node"]["interfaces"]["edges"]
+            if i["node"]["name"]["value"] == "Loopback0"
+            for a in i["node"]["ip_addresses"]["edges"]
+        ).split("/")[0]
+        for uplink in PE_UPLINKS:
+
+            async def uplink_config(name: str = uplink) -> tuple[bool, str | None]:
+                content = await self._artifact_content(
+                    client, PE_BRANCH, "pe-arista-eos-config", name
+                )
+                return bool(
+                    content and f"neighbor {loopback} peer group RR-MESH" in content
+                ), content
+
+            uplink_cfg = await self.wait_for(
+                uplink_config,
+                attempts=ARTIFACT_ATTEMPTS,
+                interval=ARTIFACT_INTERVAL,
+                description=f"{uplink} artifact on {PE_BRANCH} to list neighbour {loopback}",
+            )
+            assert uplink_cfg is not None
+            assert f"description To {BRANCH_PE}" in uplink_cfg, uplink_cfg
+
     def open_proposed_change(
         self, client_main: InfrahubClientSync, branch: str, pc_name: str
     ) -> tuple[str, list[str]]:
@@ -1114,4 +1143,47 @@ class TestSpDemoWorkflow(TestInfrahubDockerWithClient):
             assert len(sessions) == pe_count - 1, (
                 f"{uplink} has {len(sessions)} iBGP sessions on main, expected {pe_count - 1}"
             )
+
+        # The artifacts the lab deploys from are the ones on main. Re-render them
+        # the way `invoke lab.deploy` does and require the merged PE to be in them.
+        for definition_name in ("pe-arista-eos-config", "clab-mpls-topology"):
+            definition = await client.get(
+                kind="CoreArtifactDefinition", name__value=definition_name
+            )
+            response = httpx.post(
+                f"{client.config.address}/api/artifact/generate/{definition.id}",
+                headers=self._api_headers(),
+                timeout=60,
+            )
+            assert response.status_code == 200, f"{definition_name} on main: {response.text}"
+
+        async def main_pe_config() -> tuple[bool, str | None]:
+            content = await self._artifact_content(
+                client, "main", "pe-arista-eos-config", BRANCH_PE
+            )
+            return bool(content and f"hostname {BRANCH_PE}" in content), content
+
+        config = await self.wait_for(
+            main_pe_config,
+            attempts=ARTIFACT_ATTEMPTS,
+            interval=ARTIFACT_INTERVAL,
+            description=f"pe-arista-eos artifact for {BRANCH_PE} on main after merge",
+        )
+        assert config is not None and config.count("peer group RR-MESH") >= pe_count - 1, config
+
+        async def main_topology() -> tuple[bool, str | None]:
+            content = await self._artifact_content(client, "main", "clab-mpls-topology", BACKBONE)
+            return bool(content and f"    {BRANCH_PE}:" in content), content
+
+        topo = await self.wait_for(
+            main_topology,
+            attempts=ARTIFACT_ATTEMPTS,
+            interval=ARTIFACT_INTERVAL,
+            description=f"clab topology on main to include {BRANCH_PE} after merge",
+        )
+        assert topo is not None
+        pe_links = [
+            line for line in topo.splitlines() if "endpoints" in line and f"{BRANCH_PE}:" in line
+        ]
+        assert len(pe_links) == len(PE_UPLINKS), f"links naming {BRANCH_PE} on main: {pe_links}"
         logging.info("%s verified on main with %d PEs in the backbone", BRANCH_PE, pe_count)

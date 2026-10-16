@@ -559,7 +559,9 @@ def test_integration(c: Context, tier: str = "core") -> None:
     _banner(f"invoke test-integration --tier {tier}", border="cyan")
     # `core` deselects the `extended` tests -- see issue #111.
     marker = "" if tier == "full" else ' -m "not extended"'
-    c.run(f"uv run pytest tests/integration{marker}", pty=True)
+    # -v names every step in the CI log, so a reviewer can see the proposed-change
+    # and merge steps actually ran rather than counting dots.
+    c.run(f"uv run pytest -v tests/integration{marker}", pty=True)
     _success(f"Integration tests passed ({tier})")
 
 
