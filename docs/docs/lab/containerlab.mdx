@@ -49,11 +49,10 @@ Which PEs that yields depends on the active dataset:
 
 :::note MPLS data plane
 
-The lab brings up IS-IS, the full iBGP mesh and PE-CE eBGP, and every customer
-prefix lands in the right VRF. It does **not** forward traffic between customer
-sites: cEOS never starts its LDP agent, so there is no MPLS label path between
-PEs. See
-[Troubleshooting](../troubleshooting.mdx#ldp-does-not-start-so-inter-site-vpn-traffic-fails).
+The lab brings up IS-IS, LDP, the full iBGP mesh and PE-CE eBGP, and forwards
+customer traffic between the sites of each L3VPN over MPLS. If sites of one VPN
+cannot reach each other, see
+[Troubleshooting](../troubleshooting.mdx#customer-sites-of-one-vpn-cannot-reach-each-other).
 
 :::
 
@@ -337,7 +336,6 @@ different image tag in `templates/clab_topology.j2`.
 |---|---|
 | Nokia SR Linux configuration push | SR Linux uses a different CLI/API from SR OS, and the public SR Linux 23.10 image lacks several constructs SR OS supports (LDP, `l3vpn-ipv4-unicast` afi-safi, `bgp-vpn` under `network-instance`). The dedicated `pe-nokia-srlinux` artifact intentionally renders a **lab-minimum** configuration — hostname + interfaces + ISIS underlay only. BGP and per-VPN ip-vrf signalling are skipped on the SRL lab node. The production-quality configuration lives in the `pe-nokia-sros` artifact (real SR OS syntax) and is meant for a real Nokia box. |
 | Cisco / Juniper PEs | IOS-XR and Junos container images require vendor licences; these PEs are absent from the v1 lab topology. |
-| Inter-site VPN forwarding | PE-CE eBGP establishes and every customer prefix reaches the right VRF, but cEOS never starts its LDP agent, so there is no MPLS label path between PEs and traffic does not cross the backbone. See [Troubleshooting](../troubleshooting.mdx#ldp-does-not-start-so-inter-site-vpn-traffic-fails). |
 | Unmanaged CEs | Only sites with a `ce_device` get a lab CE. On the **isp** dataset no site names one, so that lab has no CE nodes, no PE-CE links, and no customer hosts. |
 
 ---
