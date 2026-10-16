@@ -1,10 +1,14 @@
-streamlit>=1.58.0
-infrahub-sdk>=1.23.2,<2.0.0
-requests>=2.34.2
-pyyaml>=6.0
-pandas>=2.0.0
-python-dotenv>=1.2.3
-# pybatfish drives the Batfish Check page (pages/3_Batfish_Check.py).
-# The page imports the helpers from `checks/batfish_helpers.py` (mounted
-# read-only at /app/checks) and talks to the batfish sidecar directly.
-pybatfish>=2025.7.7
+# Packages the Streamlit Service Catalog image installs.
+#
+# Names only, on purpose: the versions come from uv.lock, and the Docker build
+# constrains every package here to the locked version. Move a version floor in
+# pyproject.toml, not here.
+streamlit
+infrahub-sdk
+requests
+pyyaml
+pandas
+python-dotenv
+# pybatfish drives the Batfish Check page (pages/3_Batfish_Check.py), which
+# imports the helpers from checks/batfish_helpers.py.
+pybatfish

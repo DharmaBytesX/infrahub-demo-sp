@@ -1,0 +1,26 @@
+---
+# Builds the Streamlit catalog and the Batfish runner from this checkout and
+# mounts their sources, so edits show up without rebuilding.
+#
+# `invoke start --build`, or INFRAHUB_SERVICE_CATALOG_BUILD="true" in .env,
+# layers this file on top of docker-compose.override.yml.
+services:
+  streamlit-service-catalog:
+    build:
+      context: .
+      dockerfile: service_catalog/Dockerfile
+    volumes:
+      - ./service_catalog:/app
+      # The Batfish Check page (pages/3_Batfish_Check.py) imports
+      # `checks.batfish_helpers`. Mounted read-only: the canonical check
+      # sources live with the rest of `checks/`.
+      - ./checks:/app/checks:ro
+
+  batfish-runner:
+    build:
+      context: .
+      dockerfile: batfish_runner/Dockerfile
+    volumes:
+      - ./batfish_runner:/app
+      # Reuse the canonical engine without duplicating it.
+      - ./checks:/app/checks:ro
