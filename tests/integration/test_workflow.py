@@ -1034,12 +1034,13 @@ class TestSpDemoWorkflow(TestInfrahubDockerWithClient):
 
     def open_proposed_change(
         self, client_main: InfrahubClientSync, branch: str, pc_name: str
-    ) -> tuple[str, list[str]]:
+    ) -> tuple[str, list[str], set[str]]:
         """Open a proposed change and wait for its validators to settle.
 
         Returns:
-            The proposed change id and the list of ``label -> conclusion`` strings
-            for validators that did not conclude ``success``.
+            The proposed change id, the list of ``label -> conclusion`` strings
+            for validators that did not conclude ``success``, and the label of
+            every validator that ran.
         """
         mutation = Mutation(
             mutation="CoreProposedChangeCreate",
@@ -1090,17 +1091,27 @@ class TestSpDemoWorkflow(TestInfrahubDockerWithClient):
             logging.info("validation %s -> %s", name, conclusion)
             if conclusion != "success":
                 failed.append(f"{name} -> {conclusion}")
-        return pc_id, failed
+        return pc_id, failed, {validation.label.value for validation in validations}
 
     @pytest.mark.order(23)
     @pytest.mark.dependency(name="pe_proposed_change", depends=["pe_artifacts"])
     def test_23_create_pe_proposed_change(
         self, client_main: InfrahubClientSync, workflow_state: dict[str, Any]
     ) -> None:
-        """Every validator, pe_onboarding and backbone_session_count included, succeeds."""
-        pc_id, failed = self.open_proposed_change(client_main, PE_BRANCH, f"Add PE {BRANCH_PE}")
+        """Every validator, pe_onboarding and backbone_session_count included, succeeds.
+
+        "Included" is asserted, not assumed: when a repository sync deletes a
+        check definition, Infrahub stops creating that check's validator and
+        reports no error, so "no validator failed" alone would pass without the
+        check ever running (see the rollout section of docs/docs/backbone/add-pe.mdx).
+        """
+        pc_id, failed, labels = self.open_proposed_change(
+            client_main, PE_BRANCH, f"Add PE {BRANCH_PE}"
+        )
         workflow_state["pe_pc_id"] = pc_id
         assert not failed, f"proposed-change validations did not all succeed: {failed}"
+        for check in ("Check: pe_onboarding", "Check: backbone_session_count"):
+            assert check in labels, f"{check} did not run; validators that ran: {sorted(labels)}"
 
     @pytest.mark.order(24)
     @pytest.mark.dependency(name="pe_merge", depends=["pe_proposed_change"])
