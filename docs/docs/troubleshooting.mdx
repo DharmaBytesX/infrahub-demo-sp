@@ -152,9 +152,9 @@ forms an LDP session.
 
 ### The PE does not send routes from a site with the same customer AS
 
-LDP is up, and the remote site's prefixes are installed in the PE's VRF, but
+LDP is up, and the remote site's prefixes are installed in the VRF on the PE, but
 the CE does not receive them. `show ip bgp neighbors <pe> received-routes` on
-the CE lists only routes whose AS path does not contain the CE's own AS.
+the CE lists only routes whose AS path does not contain the AS of the CE itself.
 
 **Cause:** both sites of a VPN use the same customer AS (on the **financial**
 dataset, 65100 for the trading VPN and 65101 for the IB VPN). The routes from
