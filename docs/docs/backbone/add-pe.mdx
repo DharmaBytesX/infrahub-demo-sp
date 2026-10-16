@@ -218,18 +218,20 @@ docker exec clab-mpls-backbone-1-cust-trading-lon ping -c 3 10.200.40.10   # IB 
 
 ## Known limitations
 
-- **Onboard one PE at a time.** Each request's generator reads only its own
-  branch. When two requests on separate branches name the same uplink, for
-  example `pe-02`, both convert the same free port on it (for example
-  `Ethernet5`) for their own link. On each branch the port is free, so both
-  proposed changes pass their checks. Merging the second one then conflicts,
-  or leaves two /31 addresses on one port. Neither branch creates the iBGP
-  sessions between the two new PEs, because neither PE exists on the other
-  branch. Merge one proposed change before you open the next. If one is
-  already open, delete the second request and open it again after the merge.
 - **Changing a request's uplinks after generation is not supported.** The port
   the generator claimed on an uplink PE belongs to that PE, so the generator
   never un-claims it. Delete the request and open a new branch instead.
+- **Onboard one PE at a time.** The generator reads only its own branch. Two
+  requests open on separate branches can claim the same free port on a shared
+  uplink PE, and neither new PE gets an iBGP session to the other. The checks
+  evaluate each branch on its own, so both proposed changes pass. Merge one
+  proposed change before you open the next request.
+- **A device name can be used only once.** The generator stops with an error
+  when a device with the request's name already exists and the request did not
+  create it, instead of adopting that device.
+- **A decommissioned request is no longer validated.** Setting a request's status
+  to `decommissioned` skips it in the `pe_onboarding` check. It does not remove
+  the device or its links.
 - **Management addresses are not pinned.** The containerlab topology lets
   containerlab assign management addresses, so adding a node can shift the
   address an external collector was configured with.
@@ -255,12 +257,6 @@ INFRAHUB_SERVICE_CATALOG=true uv run invoke start   # rebuilds the catalog conta
 ```
 
 All four loads are idempotent.
-
-The `TopologyPeOnboarding` status no longer offers `decommissioned`. On an
-instance that loaded the earlier schema, `infrahubctl schema load` reports no
-change and the server keeps offering that choice, as observed on Infrahub
-1.11.7. Do not set it: the `pe_onboarding` check fails every request that is
-not `active`, and nothing decommissions a PE.
 
 One more thing to check on an instance whose repository carries branches that
 predate this change. The repository sync creates an Infrahub branch per git

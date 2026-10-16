@@ -407,16 +407,12 @@ async def backbone_pe_loopbacks(
     branch: str,
     backbone_id: str,
 ) -> dict[str, tuple[str, str, str]]:
-    """Return ``{pe name: (device id, Loopback0 address id, address)}`` for one backbone.
+    """Return ``{pe name: (device id, Loopback0 address id, address)}`` for a backbone's PEs.
 
-    Only the PEs in the backbone's ``pes`` relationship: the ``pe_onboarding``
-    and ``backbone_session_count`` checks count that relationship, so reading
-    every ``role=pe`` device instead would give the generator a different list
-    from the checks as soon as a second backbone exists.
-
-    Read through GraphQL rather than the generator's own query so that query
-    never returns the device the generator creates, which the backbone's
-    ``pes`` will include after the first run (see
+    Reads the backbone's ``pes`` relationship, the same list the pe_onboarding
+    check counts sessions against, so a second backbone's PEs never join this
+    mesh. Read through GraphQL rather than the generator's own query so that
+    query never returns the device the generator creates (see
     tests/unit/test_catalog/test_pe_generator_registration.py). A PE without a
     Loopback0 address is skipped: the generator cannot peer with it.
 
@@ -429,8 +425,8 @@ async def backbone_pe_loopbacks(
         Mapping of PE name to its device id, Loopback0 address id and address.
     """
     query = """
-    query BackbonePeLoopbacks($backbone: ID!) {
-      TopologyMplsBackbone(ids: [$backbone]) {
+    query PeLoopbacks($backbone_id: ID!) {
+      TopologyMplsBackbone(ids: [$backbone_id]) {
         edges {
           node {
             pes {
@@ -457,7 +453,7 @@ async def backbone_pe_loopbacks(
     }
     """
     data = await client.execute_graphql(
-        query=query, variables={"backbone": backbone_id}, branch_name=branch
+        query=query, variables={"backbone_id": backbone_id}, branch_name=branch
     )
     result: dict[str, tuple[str, str, str]] = {}
     for backbone_edge in data["TopologyMplsBackbone"]["edges"]:

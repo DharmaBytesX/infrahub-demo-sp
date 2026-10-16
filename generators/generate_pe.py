@@ -69,8 +69,9 @@ class PeOnboardingGenerator(InfrahubGenerator):
                 ``self.data`` when not supplied.
 
         Raises:
-            RuntimeError: If the request names fewer than two uplinks, or a
-                platform with no artifact group.
+            RuntimeError: If the request names fewer than two uplinks, a
+                platform with no artifact group, or a device name that another
+                device already uses.
         """
         payload = data or self.data
         edges = payload.get("TopologyPeOnboarding", {}).get("edges", [])
@@ -88,10 +89,7 @@ class PeOnboardingGenerator(InfrahubGenerator):
         if platform not in PLATFORM_GROUP:
             raise RuntimeError(f"No artifact group for platform {platform!r}")
 
-        # Read through the SDK, not the generator query: that query must never
-        # return `device`, the node this generator creates (see
-        # queries/service/pe_onboarding.gql).
-        request_obj: Any = await self.client.get(
+        request_obj = await self.client.get(
             kind="TopologyPeOnboarding", id=request["id"], branch=self.branch
         )
         device = await self._ensure_device(request, request_obj, backbone_as_id)
@@ -101,34 +99,30 @@ class PeOnboardingGenerator(InfrahubGenerator):
         for index, uplink in enumerate(uplinks, start=1):
             await self._ensure_uplink(device, name, uplink, index, request["id"])
         await self._ensure_spare_interfaces(device, len(uplinks))
-        await self._ensure_ibgp_mesh(device, name, loopback_ip, backbone_as_id, backbone["id"])
+        await self._ensure_ibgp_mesh(device, name, loopback_ip, backbone["id"], backbone_as_id)
         await self._ensure_memberships(device, platform, backbone["id"])
 
-        request_obj.status.value = "active"
+        request_obj.status.value = "active"  # type: ignore[union-attr]
         await request_obj.save(allow_upsert=True)
 
     async def _ensure_device(
         self, request: dict[str, Any], request_obj: Any, backbone_as_id: str
     ) -> Any:
-        """Create the PE device, or re-save the one this request created on an earlier run.
+        """Create the PE device, or re-save it when a previous run already did.
 
         Not ``find_or_create_device`` from common.py: the PE also needs its
         backbone AS, which that helper (written for SD-WAN edges) has no slot for.
 
-        A device with the request's name that the request does not already
-        point to belongs to someone else. Adopting it would put it in this
-        generator's tracking group, and deleting the request later would then
-        delete that device. The catalog form rejects existing names, but a
-        request loaded from YAML or created in the web UI is not checked there,
-        so the generator refuses here and the ``pe_onboarding`` check reports it.
-
-        The new device is linked to the request straight away, before anything
-        else is built, so a run that fails part-way still recognises the device
-        as its own on the next run.
+        A device with the request's name is adopted only when the request
+        already links to it. Adopting any other device would put it in this
+        generator's tracking group, and deleting the request would then delete
+        a device the request never created. The new device is linked to the
+        request as soon as it exists, so a run that fails later still leaves
+        the link for the next run to recognise.
 
         Args:
             request: The TopologyPeOnboarding node from the query result.
-            request_obj: The same request as an SDK node, to link the device to.
+            request_obj: The same request as an SDK node, which holds ``device``.
             backbone_as_id: Infrahub id of the backbone RoutingAutonomousSystem.
 
         Returns:
@@ -136,7 +130,7 @@ class PeOnboardingGenerator(InfrahubGenerator):
 
         Raises:
             RuntimeError: If a device with the request's name exists and the
-                request does not point to it.
+                request does not link to it.
         """
         name = request["name"]["value"]
         existing = await self.client.filters(
@@ -145,8 +139,7 @@ class PeOnboardingGenerator(InfrahubGenerator):
         if existing:
             if existing[0].id != request_obj.device.id:
                 raise RuntimeError(
-                    f"A device named {name!r} already exists and was not created by PE "
-                    f"onboarding request {request['id']}; choose another name"
+                    f"A device named {name!r} already exists and was not created by this request"
                 )
             return await touch(existing[0])
         device = await self.client.create(
@@ -343,7 +336,7 @@ class PeOnboardingGenerator(InfrahubGenerator):
         return ip
 
     async def _ensure_ibgp_mesh(
-        self, device: Any, name: str, loopback_ip: Any, backbone_as_id: str, backbone_id: str
+        self, device: Any, name: str, loopback_ip: Any, backbone_id: str, backbone_as_id: str
     ) -> None:
         """Create the iBGP session rows in both directions to every other PE of the backbone.
 
@@ -356,10 +349,8 @@ class PeOnboardingGenerator(InfrahubGenerator):
             device: The new PE's DcimDevice node.
             name: The new PE's name.
             loopback_ip: The new PE's Loopback0 IpamIPAddress node.
+            backbone_id: Infrahub id of the TopologyMplsBackbone whose PEs to peer with.
             backbone_as_id: Infrahub id of the backbone RoutingAutonomousSystem.
-            backbone_id: Infrahub id of the request's TopologyMplsBackbone. Only
-                its PEs get a session, the same set the ``pe_onboarding`` and
-                ``backbone_session_count`` checks count.
         """
         loopbacks = await backbone_pe_loopbacks(self.client, self.branch, backbone_id)
         for peer_name, (peer_id, peer_ip_id, _) in sorted(loopbacks.items()):

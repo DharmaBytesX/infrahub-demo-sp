@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import os
 import time
+import urllib.request
 import uuid
-from urllib.parse import quote
 
-import httpx
 import streamlit as st
-from infrahub_sdk.exceptions import Error as InfrahubSdkError
 from utils import client_for, run_async
 from utils.validators import (
     PE_ONBOARDING_PROGRESS_QUERY,
@@ -23,6 +21,8 @@ REQUIRED_STABLE_PASSES = 2
 # The iBGP mesh is 2 x (N - 1) session rows, so this generator takes longer than
 # the L3VPN one; the default wait is sized for a nine-PE backbone.
 GENERATOR_WAIT_SECONDS = int(os.environ.get("GENERATOR_WAIT_TIME", "180"))
+# Per artifact definition. Without a timeout one slow render blocks the page.
+ARTIFACT_REQUEST_TIMEOUT_SECONDS = 60
 
 st.title("Add PE")
 st.caption(
@@ -166,23 +166,30 @@ if submitted:
 
         # Re-render every artifact on the branch so the proposed change shows the
         # new PE's config, every neighbour's new session and the lab topology.
-        # Through the SDK client, so each call has its timeout and the client's
-        # credentials. Not `definition.generate()`: it posts without `?branch=`,
-        # so it would render on main.
-        try:
-            for definition in run_async(client.all(kind="CoreArtifactDefinition")):
-                url = (
-                    f"{client.address}/api/artifact/generate/{definition.id}"
-                    f"?branch={quote(branch_name, safe='')}"
-                )
-                response = run_async(client._post(url=url, payload={"nodes": []}))
-                response.raise_for_status()
-        except (InfrahubSdkError, httpx.HTTPError) as exc:
+        definitions = run_async(client.all(kind="CoreArtifactDefinition"))
+        api_token = os.environ.get("INFRAHUB_API_TOKEN")
+        if definitions and not api_token:
             st.error(
-                f"Rendering the artifacts on `{branch_name}` failed, so no proposed change "
-                f"was opened. The branch is preserved for inspection. Error: {exc}"
+                "INFRAHUB_API_TOKEN is not set, so the artifacts cannot be re-rendered. "
+                f"No proposed change was opened. Branch `{branch_name}` is preserved."
             )
             st.stop()
+        for definition in definitions:
+            url = f"{client.address}/api/artifact/generate/{definition.id}?branch={branch_name}"
+            request_obj = urllib.request.Request(
+                url, method="POST", headers={"X-INFRAHUB-KEY": api_token or ""}
+            )
+            try:
+                with urllib.request.urlopen(
+                    request_obj, timeout=ARTIFACT_REQUEST_TIMEOUT_SECONDS
+                ) as response:
+                    response.read()
+            except OSError as exc:
+                st.error(
+                    f"Re-rendering artifact definition {definition.name.value} failed: {exc}. "
+                    f"No proposed change was opened. Branch `{branch_name}` is preserved."
+                )
+                st.stop()
 
         pc = run_async(
             client_main.create(

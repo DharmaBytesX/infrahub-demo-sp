@@ -5,6 +5,10 @@ Runs on every proposed change for each ``TopologyPeOnboarding`` in the
 uniqueness; what it cannot express is the cross-node shape the generator
 needs: two distinct uplinks, each a PE of the same backbone with a port to
 spare, and a name that no other device already uses.
+
+A request whose status is ``decommissioned`` is skipped. The check runs for
+every member of the group, so validating a retired request would fail every
+later proposed change.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ from typing import Any
 from infrahub_sdk.checks import InfrahubCheck
 
 MIN_UPLINKS = 2
+RETIRED_STATUS = "decommissioned"
 
 
 def _value(node: dict[str, Any] | None, attribute: str) -> Any:
@@ -34,6 +39,8 @@ class PeOnboardingCheck(InfrahubCheck):
         """
         for edge in data.get("TopologyPeOnboarding", {}).get("edges", []):
             request = edge["node"]
+            if _value(request, "status") == RETIRED_STATUS:
+                continue
             name = request["name"]["value"]
             backbone = (request.get("backbone") or {}).get("node") or {}
             backbone_name = _value(backbone, "name")

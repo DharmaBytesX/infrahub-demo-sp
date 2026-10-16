@@ -154,6 +154,16 @@ async def test_later_core_links_do_not_invalidate_an_existing_request() -> None:
 
 
 @pytest.mark.asyncio
+async def test_decommissioned_request_is_skipped() -> None:
+    """A retired request must not fail later proposed changes, even though it is incomplete."""
+    data = _data(uplinks=[_uplink("pe-02")], backbone_pes=())
+    request = data["TopologyPeOnboarding"]["edges"][0]["node"]
+    request["status"]["value"] = "decommissioned"
+    request["device"]["node"] = None
+    assert await _errors(data) == []
+
+
+@pytest.mark.asyncio
 async def test_a_name_taken_by_another_device_fails() -> None:
     """A request loaded from YAML can name a device that already exists.
 
