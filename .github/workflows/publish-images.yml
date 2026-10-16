@@ -1,0 +1,351 @@
+---
+# yamllint disable rule:truthy rule:line-length
+name: Publish images
+
+# Builds the Streamlit Service Catalog and the Batfish runner images, and
+# publishes them to the OpsMill Harbor registry (public alias registry.opsmill.io):
+#
+#   registry.opsmill.io/opsmill/infrahub-demo-sp-streamlit
+#   registry.opsmill.io/opsmill/infrahub-demo-sp-batfish-runner
+#
+# Pull requests build and smoke-test the images without publishing and without
+# reading any secret. Pushes to main, the weekly rebuild and manual runs with
+# `publish` enabled push linux/amd64 and linux/arm64 images, then sign them and
+# attach SBOMs, as the other OpsMill images are.
+#
+# Needs, in the repository settings: variable HARBOR_HOST and secrets
+# HARBOR_USERNAME and HARBOR_PASSWORD (a Harbor robot account allowed to push to
+# the `opsmill` project).
+
+on:
+  pull_request:
+    paths:
+      - "service_catalog/**"
+      - "batfish_runner/**"
+      - "checks/__init__.py"
+      - "checks/batfish_common.py"
+      - "checks/batfish_helpers.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".dockerignore"
+      - ".github/workflows/publish-images.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "service_catalog/**"
+      - "batfish_runner/**"
+      - "checks/__init__.py"
+      - "checks/batfish_common.py"
+      - "checks/batfish_helpers.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".dockerignore"
+      - ".github/workflows/publish-images.yml"
+  schedule:
+    # Weekly, so the base image's security fixes reach the published `main` tag.
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Push the images to Harbor"
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # A publish run must finish, so only pull request runs are cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test-build:
+    name: "Build and smoke-test ${{ matrix.image }}"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: streamlit
+            dockerfile: service_catalog/Dockerfile
+            port: 8501
+            health_path: /_stcore/health
+            import_check: "import checks.batfish_helpers"
+          - image: batfish-runner
+            dockerfile: batfish_runner/Dockerfile
+            port: 8080
+            health_path: /health
+            import_check: "import checks.batfish_helpers"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build the image for linux/amd64
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          load: true
+          tags: smoke:${{ matrix.image }}
+          cache-from: type=gha,scope=${{ matrix.image }}-amd64
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-amd64
+
+      - name: Check the Batfish helpers import
+        run: |
+          docker run --rm --entrypoint python "smoke:${{ matrix.image }}" \
+            -c "${{ matrix.import_check }}"
+
+      - name: Check the container runs as a non-root user
+        run: |
+          uid=$(docker run --rm --entrypoint id "smoke:${{ matrix.image }}" -u)
+          if [ "${uid}" = "0" ]; then
+            echo "::error::The ${{ matrix.image }} image runs as root."
+            exit 1
+          fi
+
+      - name: Check the container reports healthy
+        run: |
+          docker run -d --name smoke \
+            -e INFRAHUB_ADDRESS=http://localhost:1 \
+            -e INFRAHUB_API_TOKEN=smoke-test \
+            -p "${{ matrix.port }}:${{ matrix.port }}" \
+            "smoke:${{ matrix.image }}"
+          for _ in $(seq 1 30); do
+            if curl --fail --silent "http://localhost:${{ matrix.port }}${{ matrix.health_path }}"; then
+              echo
+              echo "The ${{ matrix.image }} container is healthy."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::The ${{ matrix.image }} container did not become healthy within 60 seconds."
+          docker logs smoke
+          exit 1
+
+  metadata:
+    name: Compute image tags and labels
+    needs: test-build
+    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.publish) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tags: ${{ steps.meta.outputs.tags }}
+      labels: ${{ steps.meta.outputs.labels }}
+    steps:
+      # `main` follows the default branch. `sha-<commit>` never moves, so a
+      # deployment pins it. A manual run from another branch gets only the
+      # `sha-` tag, so it cannot replace `main`.
+      - name: Resolve tags and labels
+        id: meta
+        env:
+          SHA: ${{ github.sha }}
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REPOSITORY: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          set -euo pipefail
+          {
+            echo "tags<<EOF"
+            echo "sha-${SHA::7}"
+            if [ "${REF_NAME}" = "${DEFAULT_BRANCH}" ]; then
+              echo "main"
+            fi
+            echo "EOF"
+            echo "labels<<EOF"
+            echo "org.opencontainers.image.source=${SERVER_URL}/${REPOSITORY}"
+            echo "org.opencontainers.image.revision=${SHA}"
+            echo "org.opencontainers.image.licenses=MIT"
+            echo "org.opencontainers.image.vendor=OpsMill"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: "Build ${{ matrix.image }} (${{ matrix.platform }})"
+    needs: metadata
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        image: [streamlit, batfish-runner]
+        platform: [linux/amd64, linux/arm64]
+        include:
+          - image: streamlit
+            dockerfile: service_catalog/Dockerfile
+          - image: batfish-runner
+            dockerfile: batfish_runner/Dockerfile
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Login to Harbor
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ vars.HARBOR_HOST }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Build and push by digest
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          provenance: false  # avoids cross-platform "unknown" entries
+          labels: ${{ needs.metadata.outputs.labels }}
+          outputs: type=image,name=${{ vars.HARBOR_HOST }}/opsmill/infrahub-demo-sp-${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.arch }}
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.image }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: "Publish ${{ matrix.image }} manifest"
+    needs: [metadata, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        image: [streamlit, batfish-runner]
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ matrix.image }}-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Login to Harbor
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ vars.HARBOR_HOST }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Create the multi-architecture manifest
+        working-directory: /tmp/digests
+        env:
+          IMAGE: ${{ vars.HARBOR_HOST }}/opsmill/infrahub-demo-sp-${{ matrix.image }}
+          TAGS: ${{ needs.metadata.outputs.tags }}
+        run: |
+          set -euo pipefail
+          SOURCES=()
+          for digest in *; do
+            SOURCES+=("${IMAGE}@sha256:${digest}")
+          done
+          TAG_ARGS=()
+          while IFS= read -r tag; do
+            [ -z "${tag}" ] && continue
+            TAG_ARGS+=(--tag "${IMAGE}:${tag}")
+          done <<< "${TAGS}"
+          docker buildx imagetools create "${TAG_ARGS[@]}" "${SOURCES[@]}"
+
+      - name: Summarise the published tags
+        env:
+          IMAGE: ${{ vars.HARBOR_HOST }}/opsmill/infrahub-demo-sp-${{ matrix.image }}
+          TAGS: ${{ needs.metadata.outputs.tags }}
+        run: |
+          set -euo pipefail
+          FIRST_TAG=$(printf '%s\n' "${TAGS}" | sed -n '1p')
+          digest=$(docker buildx imagetools inspect "${IMAGE}:${FIRST_TAG}" \
+            --format '{{json .Manifest}}' | jq -r '.digest')
+          {
+            echo "### ${{ matrix.image }}"
+            echo ""
+            echo "Digest: \`${digest}\`"
+            echo ""
+            while IFS= read -r tag; do
+              [ -z "${tag}" ] && continue
+              echo "- \`registry.opsmill.io/opsmill/infrahub-demo-sp-${{ matrix.image }}:${tag}\`"
+            done <<< "${TAGS}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  sign:
+    name: "Sign and attach SBOM to ${{ matrix.image }}"
+    needs: [metadata, merge]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        image: [streamlit, batfish-runner]
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0.24.2
+
+      - name: Login to Harbor
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ vars.HARBOR_HOST }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      # The `sha-<commit>` tag never moves, so it resolves to the manifest
+      # that the previous job pushed.
+      - name: Resolve the manifest digest
+        env:
+          IMAGE: ${{ vars.HARBOR_HOST }}/opsmill/infrahub-demo-sp-${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          digest=$(docker buildx imagetools inspect "${IMAGE}:sha-${GITHUB_SHA::7}" \
+            --format '{{json .Manifest}}' | jq -r '.digest')
+          echo "REFERENCE=${IMAGE}@${digest}" >> "$GITHUB_ENV"
+
+      - name: Sign the manifest
+        run: |
+          cosign sign --yes --recursive --new-bundle-format=false --use-signing-config=false \
+            "${REFERENCE}"
+
+      - name: Generate the SBOMs
+        run: |
+          syft "${REFERENCE}" --output spdx-json=sbom.spdx.json
+          syft "${REFERENCE}" --output cyclonedx-json=sbom.cdx.json
+
+      - name: Attest the SBOMs
+        run: |
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json "${REFERENCE}"
+          cosign attest --yes --type cyclonedx --predicate sbom.cdx.json "${REFERENCE}"
+
+      - name: Upload the SBOMs
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom-${{ matrix.image }}-${{ github.sha }}
+          path: |
+            sbom.spdx.json
+            sbom.cdx.json
+          retention-days: 90

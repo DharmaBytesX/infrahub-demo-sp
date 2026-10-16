@@ -25,9 +25,9 @@ services:
       - ./:/upstream
 
   streamlit-service-catalog:
-    build:
-      context: ./service_catalog
-      dockerfile: Dockerfile
+    # Published by .github/workflows/publish-images.yml. To build it from this
+    # checkout instead, see docker-compose.catalog-dev.yml.
+    image: ${STREAMLIT_IMAGE:-registry.opsmill.io/opsmill/infrahub-demo-sp-streamlit:main}
     container_name: service-catalog
     ports:
       - "${STREAMLIT_PORT:-8501}:8501"
@@ -41,14 +41,6 @@ services:
       # below; override here if the topology changes.
       - BATFISH_HOST=batfish
       - BATFISH_PORT=9996
-    volumes:
-      - ./service_catalog:/app
-      - ./objects:/objects:ro
-      # The Batfish Check page (pages/3_Batfish_Check.py) imports
-      # `checks.batfish_helpers` to reuse the query parsers without
-      # duplicating them. Mounted read-only — the page is a reader,
-      # the canonical check sources live with the rest of `checks/`.
-      - ./checks:/app/checks:ro
     depends_on:
       - infrahub-server
     profiles:
@@ -71,12 +63,10 @@ services:
   batfish-runner:
     # Owns the pybatfish engine so the stock task-worker image doesn't have to.
     # The BatfishBackboneCheck POSTs configs to /check; this service drives the
-    # batfish sidecar and returns findings as JSON. Source is bind-mounted
-    # (deps are baked into the image) so editing the check engine needs no
-    # rebuild — same pattern as the Streamlit container above.
-    build:
-      context: ./batfish_runner
-      dockerfile: Dockerfile
+    # batfish sidecar and returns findings as JSON. Published by
+    # .github/workflows/publish-images.yml; to build it from this checkout
+    # instead, see docker-compose.catalog-dev.yml.
+    image: ${BATFISH_RUNNER_IMAGE:-registry.opsmill.io/opsmill/infrahub-demo-sp-batfish-runner:main}
     container_name: batfish-runner
     restart: unless-stopped
     environment:
@@ -86,11 +76,6 @@ services:
       # Exposed so the host-side `uv run invoke batfish` task can reach it at
       # http://localhost:${BATFISH_RUNNER_PORT}.
       - "${BATFISH_RUNNER_PORT:-8080}:8080"
-    volumes:
-      - ./batfish_runner:/app
-      # Reuse the canonical engine without duplicating it — same read-only
-      # mount the Streamlit container uses.
-      - ./checks:/app/checks:ro
     depends_on:
       - batfish
     networks:
