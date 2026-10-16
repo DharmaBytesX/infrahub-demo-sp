@@ -43,9 +43,14 @@ the step-by-step walkthrough.
   SR Linux as the clab substitute for the Nokia PE.
 - **Five proposed-change checks** including `BatfishBackboneCheck` for
   Batfish-driven static validation of the rendered configs.
+- **Add a PE router from the command line**: `invoke demo-add-device` runs
+  the Add PE flow without the browser. It opens a branch, has the generator
+  build the router and its iBGP sessions, opens a proposed change and prints
+  its link.
 - **Containerlab integration**: `invoke lab.deploy` builds a topology
   artifact, fetches per-PE startup configs, and boots cEOS + SR Linux
-  in containerlab for end-to-end testing.
+  in containerlab for end-to-end testing. `--branch <name>` boots a proposed
+  change before it is merged.
 
 Quick task reference (run via `uv run invoke <name>`):
 
@@ -54,6 +59,7 @@ Quick task reference (run via `uv run invoke <name>`):
 | `init` | Destroy + start + bootstrap end-to-end |
 | `start` / `destroy` | Bring Infrahub up / tear it down |
 | `bootstrap` | Load schemas + data into a running Infrahub |
+| `demo-add-device` | Add a PE router on a new branch and open a proposed change; prints its link |
 | `batfish` | Run `BatfishBackboneCheck` against the live MPLS backbone |
 | `lab.deploy` / `lab.destroy` | Bring the containerlab up / down (`lab.deploy --branch <name>` boots a branch) |
 | `lab.push-arista` | Push the rendered Arista config to the lab cEOS node |

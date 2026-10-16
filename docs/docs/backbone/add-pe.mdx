@@ -1,11 +1,80 @@
 # Add a PE router
 
 This page documents PE onboarding end-to-end: how an operator adds a PE
-router to the MPLS backbone through the Streamlit catalog, what Infrahub does
-automatically, which checks gate the merge, and how to boot the new router in
-the lab afterwards.
+router to the MPLS backbone, either from the Streamlit catalog or with the
+`invoke demo-add-device` command, what Infrahub does automatically, which
+checks gate the merge, and how to boot the new router in the lab before and
+after the merge.
 
 For field-level schema details see [schema-reference](../schema-reference.mdx).
+
+---
+
+## Run the demo from the command line
+
+`invoke demo-add-device` does what the catalog's **Add PE** page does, in the
+same order, without the browser. It is the quickest way to show the whole
+change workflow: request a router, review the proposed change, boot it in the
+lab, merge.
+
+```bash
+uv run invoke demo-add-device
+```
+
+With no options the command picks values that work on either dataset:
+
+| Option | Default | Example on the financial dataset |
+|---|---|---|
+| `--name` | The next free `pe-NN` name | `pe-09` |
+| `--uplinks` | The first two PEs of the backbone, by name | `pe-01,pe-02` |
+| `--platform` | `arista_eos`, the platform the lab can boot | `arista_eos` |
+| `--site` | The site of the first uplink | `lon` |
+| `--device-type` | The device type of the first uplink | `7280R3` |
+| `--branch` | `backbone/add-pe-<name>-<random suffix>` | `backbone/add-pe-pe-09-5f5bcbda` |
+
+Name any of them to override the default:
+
+```bash
+uv run invoke demo-add-device --name pe-10 --uplinks pe-02,pe-05
+```
+
+The command applies the same rules as the catalog form before it creates
+anything: a new name, two to four distinct uplinks on one backbone, and a
+platform with a PE configuration artifact. It then opens the branch, waits for
+the generator, renders the branch's artifacts and opens the proposed change.
+On the financial dataset this takes about 30 seconds. It ends with the link to
+the proposed change and the command that boots the change in the lab:
+
+```text
+✓ Proposed change opened
+Review the proposed change:
+  http://localhost:8000/proposed-changes/18defee2-946e-b2cc-2fb1-10653a0c4c3e
+Boot it in the lab before merging:
+  uv run invoke lab.deploy --branch backbone/add-pe-pe-09-5f5bcbda
+```
+
+The link uses `INFRAHUB_UI_URL` from `.env`. Set it to the address you open
+Infrahub at when that is not `localhost`.
+
+To continue the demo:
+
+1. Open the link and review the proposed change: the new device, the iBGP
+   session added on every other PE, and the configuration diffs.
+2. Wait for the checks to pass. See [Checks](#checks).
+3. Run the `lab.deploy --branch` command to boot the change in containerlab.
+   See [Boot the new PE in the lab](#boot-the-new-pe-in-the-lab).
+4. Merge the proposed change in the Infrahub UI.
+
+Each run takes the new router's loopback and core-link addresses from the
+same pools that every branch shares. If an earlier demo branch is still open,
+a new branch for the same name gets the next free addresses: a second `pe-09`
+gets loopback `10.0.0.10` while the first one holds `10.0.0.9`. Merge or
+delete old demo branches to keep the addresses predictable.
+
+If the generator does not finish within 300 seconds (set
+`GENERATOR_WAIT_TIME` to change this), the command stops without rendering
+artifacts or opening a proposed change, keeps the branch for inspection and
+exits with a non-zero status.
 
 ---
 
@@ -13,7 +82,7 @@ For field-level schema details see [schema-reference](../schema-reference.mdx).
 
 ```mermaid
 sequenceDiagram
-    User->>Catalog: Submit Add PE form
+    User->>Catalog: Submit Add PE form, or run invoke demo-add-device
     Catalog->>Infrahub SDK: Create branch
     Catalog->>Infrahub SDK: Create TopologyPeOnboarding
     Catalog->>Infrahub SDK: Add request to pe_onboardings group
@@ -33,9 +102,11 @@ sequenceDiagram
    uplinks. The form rejects a name that already exists, fewer than two
    distinct uplinks, or an uplink outside the chosen backbone.
    Only platforms with a PE configuration artifact are offered: Arista EOS,
-   Cisco IOS-XR, Juniper Junos and Nokia SR OS.
+   Cisco IOS-XR, Juniper Junos and Nokia SR OS. `invoke demo-add-device`
+   applies the same rules to its options, and fills in any option you leave
+   out with the defaults listed above.
 
-2. **Branch and request**: the catalog opens a branch named
+2. **Branch and request**: the catalog, or the command, opens a branch named
    `backbone/add-pe-<name>-<id>` and writes one `TopologyPeOnboarding` row
    with `status = draft`.
 
@@ -109,9 +180,10 @@ definitions already target the groups the device joins.
 
 ## Boot the new PE in the lab
 
-Before the merge, deploy the proposed change's source branch. The service
-catalog shows the branch name when it opens the proposed change. After the
-merge, run the same command without `--branch` to deploy from `main`.
+Before the merge, deploy the proposed change's source branch. The catalog
+and `invoke demo-add-device` both print the full command, with the branch
+name, when they open the proposed change. After the merge, run the same
+command without `--branch` to deploy from `main`.
 
 `invoke lab.deploy` tears the whole lab down and boots every node again:
 containerlab has no way to add a node to a running lab. With nine PEs, allow
@@ -119,7 +191,7 @@ several minutes for EOS to come up, and expect any collector that reads the
 lab by container address to re-discover everything.
 
 ```bash
-uv run invoke lab.deploy --branch backbone/add-pe-pe-09-a18c2693
+uv run invoke lab.deploy --branch backbone/add-pe-pe-09-5f5bcbda
 containerlab exec -t lab/mpls-backbone.clab.yml --label clab-node-name=pe-09 \
   --cmd "show bgp summary"
 containerlab exec -t lab/mpls-backbone.clab.yml --label clab-node-name=pe-09 \
@@ -127,7 +199,13 @@ containerlab exec -t lab/mpls-backbone.clab.yml --label clab-node-name=pe-09 \
 ```
 
 Expected: every other PE listed as an established iBGP neighbour, and one
-IS-IS adjacency per uplink.
+IS-IS adjacency per uplink. The customer hosts behind the CE routers still
+reach the other site of their own VPN, and not the other VPN:
+
+```bash
+docker exec clab-mpls-backbone-1-cust-trading-lon ping -c 3 10.200.20.10   # trading Zurich: replies
+docker exec clab-mpls-backbone-1-cust-trading-lon ping -c 3 10.200.40.10   # IB Zurich: no reply
+```
 
 ---
 

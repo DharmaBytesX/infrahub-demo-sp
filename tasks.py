@@ -514,7 +514,11 @@ def bootstrap(c: Context) -> None:
     _success("All artifacts ready")
 
     console.print()
-    _banner("Bootstrap complete", border="green")
+    _banner(
+        "Bootstrap complete",
+        body="[dim]Demo adding a PE router:[/dim] uv run invoke demo-add-device",
+        border="green",
+    )
 
 
 @task(name="init")
@@ -547,10 +551,64 @@ def init_demo(c: Context) -> None:
                 if INFRAHUB_SERVICE_CATALOG
                 else ""
             )
-            + "[dim]Try:[/dim] uv run invoke info"
+            + "[dim]Try:[/dim] uv run invoke info\n"
+            + "[dim]Demo adding a PE router:[/dim] uv run invoke demo-add-device"
         ),
         border="green",
     )
+
+
+@task(
+    name="demo-add-device",
+    help={
+        "name": "New PE name (default: the next free pe-NN, pe-09 on the financial dataset)",
+        "uplinks": "Comma-separated existing PEs to link to, 2 to 4 (default: the first two PEs)",
+        "platform": "Platform of the new PE (default: arista_eos, which the lab can boot)",
+        "site": "Site shortname (default: the first uplink's site)",
+        "device_type": "Device type (default: the first uplink's device type)",
+        "branch": "Branch to create (default: backbone/add-pe-<name>-<random suffix>)",
+    },
+)
+def demo_add_device(
+    c: Context,
+    name: str = "",
+    uplinks: str = "",
+    platform: str = "",
+    site: str = "",
+    device_type: str = "",
+    branch: str = "",
+) -> None:
+    """Add a PE router on a new branch and open a proposed change into main.
+
+    The command-line version of the service catalog's Add PE page, step for
+    step: branch, onboarding request, PE generator, artifacts, proposed change.
+    It prints the proposed change's link and the ``lab.deploy --branch``
+    command that boots the change in containerlab before it is merged.
+
+    Args:
+        c: Invoke context.
+        name: New PE name; empty means the next free ``pe-NN``.
+        uplinks: Comma-separated uplink PE names; empty means the first two PEs.
+        platform: Platform name; empty means ``arista_eos``.
+        site: Site shortname; empty means the first uplink's site.
+        device_type: Device type name; empty means the first uplink's.
+        branch: Branch to create; empty means a generated name.
+    """
+    _banner(
+        "invoke demo-add-device",
+        body="[bold]Add a PE router to the MPLS backbone as a proposed change[/bold]",
+        border="cyan",
+    )
+    options = {
+        "--name": name,
+        "--uplinks": uplinks,
+        "--platform": platform,
+        "--site": site,
+        "--device-type": device_type,
+        "--branch": branch,
+    }
+    args = "".join(f" {flag} {shlex.quote(value)}" for flag, value in options.items() if value)
+    c.run(f"uv run python scripts/demo_add_pe.py{args}", pty=True)
 
 
 @task(name="lint-ruff")
@@ -1036,6 +1094,7 @@ ns.add_task(start)
 ns.add_task(destroy)
 ns.add_task(bootstrap)
 ns.add_task(init_demo)
+ns.add_task(demo_add_device)
 ns.add_task(lint_markdown)
 ns.add_task(lint_yaml)
 ns.add_task(lint_ruff)

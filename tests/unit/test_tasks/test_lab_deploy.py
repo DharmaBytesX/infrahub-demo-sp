@@ -1,4 +1,4 @@
-"""``invoke lab.deploy --branch``: every Infrahub step reads the same branch."""
+"""Invoke tasks that drive Infrahub workflows: `lab.deploy --branch` and `demo-add-device`."""
 
 from __future__ import annotations
 
@@ -66,3 +66,12 @@ def test_no_branch_leaves_every_infrahub_step_on_the_default(lab_paths: Path) ->
     steps = _infrahub_steps(ctx.commands)
     assert len(steps) == 3
     assert not [step for step in steps if "--branch" in step]
+
+
+def test_demo_add_device_passes_only_the_options_given() -> None:
+    """Empty options are left out so the script's own defaults apply."""
+    ctx = _RecordingContext()
+    tasks.demo_add_device.body(ctx, uplinks="pe-02,pe-05", device_type="7280R3")  # type: ignore[arg-type]
+    assert ctx.commands == [
+        "uv run python scripts/demo_add_pe.py --uplinks pe-02,pe-05 --device-type 7280R3"
+    ]

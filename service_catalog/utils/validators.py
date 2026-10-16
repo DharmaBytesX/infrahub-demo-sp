@@ -305,6 +305,21 @@ def validate_add_pe_form(
     return errors
 
 
+# What the PE generator writes for a request, read back to tell "finished" from
+# "started" -- the counts ``pe_is_materialised`` compares. Requested by name so
+# it works on the branch where the request was just created. Shared by the Add
+# PE page and ``scripts/demo_add_pe.py`` so both wait on the same thing.
+PE_ONBOARDING_PROGRESS_QUERY = """
+query PeProgress($name: String!) {
+  TopologyPeOnboarding(name__value: $name) {
+    edges { node { status { value } device { node { id } } } }
+  }
+  InterfacePhysical(device__name__value: $name, role__value: "core") { count }
+  RoutingBGPSession(device__name__value: $name, session_type__value: "INTERNAL") { count }
+}
+"""
+
+
 def pe_is_materialised(
     request_node: dict[str, Any] | None,
     *,

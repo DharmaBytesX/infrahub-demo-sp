@@ -9,20 +9,13 @@ import uuid
 
 import streamlit as st
 from utils import client_for, run_async
-from utils.validators import PE_PLATFORMS, pe_is_materialised, validate_add_pe_form
+from utils.validators import (
+    PE_ONBOARDING_PROGRESS_QUERY,
+    PE_PLATFORMS,
+    pe_is_materialised,
+    validate_add_pe_form,
+)
 
-# What the generator writes for a request, read back to tell "finished" from
-# "started". Requested by name so it works on the branch where the request was
-# just created.
-GENERATOR_PROGRESS_QUERY = """
-query PeProgress($name: String!) {
-  TopologyPeOnboarding(name__value: $name) {
-    edges { node { status { value } device { node { id } } } }
-  }
-  InterfacePhysical(device__name__value: $name, role__value: "core") { count }
-  RoutingBGPSession(device__name__value: $name, session_type__value: "INTERNAL") { count }
-}
-"""
 # How many consecutive materialised readings end the wait. See the poll loop.
 REQUIRED_STABLE_PASSES = 2
 # The iBGP mesh is 2 x (N - 1) session rows, so this generator takes longer than
@@ -135,7 +128,7 @@ if submitted:
         def _materialised() -> bool:
             result = run_async(
                 client.execute_graphql(
-                    query=GENERATOR_PROGRESS_QUERY,
+                    query=PE_ONBOARDING_PROGRESS_QUERY,
                     variables={"name": name},
                     branch_name=branch_name,
                 )
