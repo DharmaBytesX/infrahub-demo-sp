@@ -1,0 +1,23 @@
+# The image builds use the repository root as context. Keep the context small:
+# the Dockerfiles copy only service_catalog/, batfish_runner/ and three
+# files from checks/.
+.git
+.github
+.venv
+.env
+.mypy_cache
+.pytest_cache
+.ruff_cache
+__pycache__
+*.py[cod]
+docs
+lab
+tests
+objects
+generators
+transforms
+templates
+schemas
+queries
+menus
+scripts

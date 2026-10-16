@@ -26,6 +26,11 @@ REPO_ROOT = Path(__file__).resolve().parent
 COMPOSE_PROJECT = "sp-demo"
 INFRAHUB_VERSION = os.getenv("INFRAHUB_VERSION", "stable")
 INFRAHUB_SERVICE_CATALOG = os.getenv("INFRAHUB_SERVICE_CATALOG", "false").lower() == "true"
+# Build the Streamlit catalog and Batfish runner images from this checkout instead of
+# pulling the published ones, and bind-mount the sources for live editing.
+INFRAHUB_SERVICE_CATALOG_BUILD = (
+    os.getenv("INFRAHUB_SERVICE_CATALOG_BUILD", "false").lower() == "true"
+)
 INFRAHUB_GIT_LOCAL = os.getenv("INFRAHUB_GIT_LOCAL", "false").lower() == "true"
 INFRAHUB_DATASET = os.getenv("INFRAHUB_DATASET", "financial")
 # Git ref the server clones for transforms/generators/checks. Defaults to the
@@ -34,6 +39,7 @@ INFRAHUB_REPO_REF = os.getenv("INFRAHUB_REPO_REF", "")
 INFRAHUB_ENTERPRISE = os.getenv("INFRAHUB_ENTERPRISE", "false").lower() == "true"
 LOCAL_COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 OVERRIDE_FILE = REPO_ROOT / "docker-compose.override.yml"
+CATALOG_DEV_FILE = REPO_ROOT / "docker-compose.catalog-dev.yml"
 
 
 def _banner(title: str, body: str = "", border: str = "cyan") -> None:
@@ -92,30 +98,30 @@ def _sleep_with_progress(seconds: int, description: str) -> None:
             progress.update(bar, advance=1)
 
 
-def _compose_base() -> str:
+def _compose_base(local_build: bool = False) -> str:
     """Build the docker compose invocation, sourcing the base file locally or upstream.
 
     Mirrors infrahub-demo-dc: if a local ``docker-compose.yml`` exists, use it; otherwise
     stream the file from ``https://infrahub.opsmill.io/<version>`` via ``docker compose -f -``.
-    The committed ``docker-compose.override.yml`` is always layered on top.
+    The committed ``docker-compose.override.yml`` is always layered on top. With
+    ``local_build``, ``docker-compose.catalog-dev.yml`` is layered after it: it builds the
+    catalog and Batfish runner images from this checkout and mounts their sources.
     """
     base = f"docker compose -p {COMPOSE_PROJECT}"
+    files = [OVERRIDE_FILE] if OVERRIDE_FILE.exists() else []
+    if local_build and CATALOG_DEV_FILE.exists():
+        files.append(CATALOG_DEV_FILE)
+    extra = "".join(f" -f {f}" for f in files)
     if LOCAL_COMPOSE_FILE.exists():
-        cmd = f"{base} -f {LOCAL_COMPOSE_FILE}"
-        if OVERRIDE_FILE.exists():
-            cmd += f" -f {OVERRIDE_FILE}"
-        return cmd
+        return f"{base} -f {LOCAL_COMPOSE_FILE}{extra}"
     edition_path = f"enterprise/{INFRAHUB_VERSION}" if INFRAHUB_ENTERPRISE else INFRAHUB_VERSION
-    cmd = f"curl -sf https://infrahub.opsmill.io/{edition_path} | {base} -f -"
-    if OVERRIDE_FILE.exists():
-        cmd += f" -f {OVERRIDE_FILE}"
-    return cmd
+    return f"curl -sf https://infrahub.opsmill.io/{edition_path} | {base} -f -{extra}"
 
 
-def _compose(c: Context, args: str, profile: str | None = None) -> None:
+def _compose(c: Context, args: str, profile: str | None = None, local_build: bool = False) -> None:
     """Run docker compose with the demo project name and optional profile."""
     profile_arg = f"--profile {profile}" if profile else ""
-    c.run(f"{_compose_base()} {profile_arg} {args}", pty=True)
+    c.run(f"{_compose_base(local_build)} {profile_arg} {args}", pty=True)
 
 
 def _compose_source() -> str:
@@ -201,23 +207,30 @@ def info(c: Context) -> None:
 def start(c: Context, build: bool = False) -> None:
     """Start Infrahub containers.
 
-    Set ``INFRAHUB_SERVICE_CATALOG=true`` in ``.env`` to also build and start the
-    Streamlit service-catalog sidecar on every ``invoke start`` / ``invoke init``.
+    Set ``INFRAHUB_SERVICE_CATALOG=true`` in ``.env`` to also start the Streamlit
+    service-catalog sidecar. The catalog and the Batfish runner run the published
+    images from ``registry.opsmill.io``. Pass ``--build`` (or set
+    ``INFRAHUB_SERVICE_CATALOG_BUILD=true``) to build them from this checkout instead.
     """
     catalog_on = INFRAHUB_SERVICE_CATALOG
-    rebuild = build or catalog_on
+    rebuild = build or INFRAHUB_SERVICE_CATALOG_BUILD
     body = (
         f"[green]Starting Infrahub[/green] [dim]({INFRAHUB_VERSION})[/dim]\n"
         f"[dim]Project:[/dim]         {COMPOSE_PROJECT}\n"
         f"[dim]Compose source:[/dim] {_compose_source()}\n"
         f"[dim]Service catalog:[/dim] {'enabled' if catalog_on else 'disabled'}\n"
         f"[dim]Local git:[/dim]      {'enabled' if INFRAHUB_GIT_LOCAL else 'disabled'}"
-        + ("\n[yellow]Rebuild:[/yellow] enabled" if rebuild else "")
+        + ("\n[yellow]Local image build:[/yellow] enabled" if rebuild else "")
     )
     _banner("invoke start", body=body, border="green")
     profile = "service-catalog" if catalog_on else None
+    if not rebuild:
+        # The images use a moving tag, so refresh it. An offline run keeps the local copy.
+        services = "batfish-runner" + (" streamlit-service-catalog" if catalog_on else "")
+        _step("Pulling the published catalog images")
+        _compose(c, f"pull --quiet --ignore-pull-failures {services}", profile=profile)
     build_arg = "--build" if rebuild else ""
-    _compose(c, f"up -d {build_arg}", profile=profile)
+    _compose(c, f"up -d {build_arg}", profile=profile, local_build=rebuild)
     _success("Infrahub UI:      http://localhost:8000  (admin / infrahub)")
     if catalog_on:
         _success("Service catalog:  http://localhost:8501")
@@ -450,7 +463,7 @@ def init_demo(c: Context) -> None:
         border="magenta",
     )
     destroy(c)
-    start(c, build=True)
+    start(c)
     _wait("Waiting 30s for containers to settle")
     _sleep_with_progress(30, "containers warming up")
     bootstrap(c)

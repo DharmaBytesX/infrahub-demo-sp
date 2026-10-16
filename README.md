@@ -27,6 +27,7 @@ leaves them as shell variables that `invoke` and `infrahubctl` never see, and
 Visit <http://localhost:8000> (admin / infrahub) for the Infrahub UI. To
 enable the Streamlit Service Catalog sidecar set
 `INFRAHUB_SERVICE_CATALOG="true"` in `.env` and re-run `uv run invoke start`.
+The sidecar runs the published image, so there is nothing to build.
 
 See the [quickstart guide](https://docs.infrahub.app/infrahub-demo-sp/quickstart) for
 the step-by-step walkthrough.
@@ -59,3 +60,18 @@ Quick task reference (run via `uv run invoke <name>`):
 | `lint` / `test` | Ruff + mypy + yamllint / pytest |
 
 Run `uv run invoke list` for the full list with descriptions.
+
+## Container images
+
+CI publishes two images to the OpsMill registry, for `linux/amd64` and
+`linux/arm64`:
+
+| Image | Content |
+|---|---|
+| `registry.opsmill.io/opsmill/infrahub-demo-sp-streamlit` | The Streamlit Service Catalog |
+| `registry.opsmill.io/opsmill/infrahub-demo-sp-batfish-runner` | The Batfish runner sidecar |
+
+Pull the image with the `main` tag for the latest published state, or a
+`sha-<commit>` tag to pin an exact build. See the
+[quickstart](https://docs.infrahub.app/infrahub-demo-sp/quickstart) for how to
+run them and how to build them from a checkout.
