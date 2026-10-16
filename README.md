@@ -55,7 +55,7 @@ Quick task reference (run via `uv run invoke <name>`):
 | `start` / `destroy` | Bring Infrahub up / tear it down |
 | `bootstrap` | Load schemas + data into a running Infrahub |
 | `batfish` | Run `BatfishBackboneCheck` against the live MPLS backbone |
-| `lab.deploy` / `lab.destroy` | Bring the containerlab up / down |
+| `lab.deploy` / `lab.destroy` | Bring the containerlab up / down (`lab.deploy --branch <name>` boots a branch) |
 | `lab.push-arista` | Push the rendered Arista config to the lab cEOS node |
 | `lint` / `test` | Ruff + mypy + yamllint / pytest |
 

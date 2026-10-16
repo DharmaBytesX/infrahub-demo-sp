@@ -791,15 +791,22 @@ def _resolve_ceos_image() -> str:
     return os.environ.get("CEOS_IMAGE") or CEOS_IMAGE_DEFAULT
 
 
-def _fetch_artifact(c: Context, artifact_name: str, dest: Path) -> None:
+def _fetch_artifact(c: Context, artifact_name: str, dest: Path, branch: str = "") -> None:
     """Download the latest artifact content into ``dest``.
 
     Infrahub serves rendered artifacts from ``/api/storage/object/<id>``.
     ``scripts/fetch_artifact.py`` resolves the artifact name to a
     ``storage_id`` and streams the bytes to stdout, which we redirect.
+
+    Args:
+        c: Invoke context.
+        artifact_name: ``CoreArtifact`` name to fetch.
+        dest: File to write the artifact content to.
+        branch: Infrahub branch to read the artifact from; empty means main.
     """
+    branch_arg = f" --branch {shlex.quote(branch)}" if branch else ""
     c.run(
-        f"uv run python scripts/fetch_artifact.py {shlex.quote(artifact_name)} "
+        f"uv run python scripts/fetch_artifact.py {shlex.quote(artifact_name)}{branch_arg} "
         f"> {shlex.quote(str(dest))}",
         pty=False,
     )
@@ -842,10 +849,28 @@ def _report_stalled_deploy(c: Context, lab_name: str, ceos_image: str) -> None:
 lab = Collection("lab")
 
 
-@task(name="deploy")
-def lab_deploy(c: Context) -> None:
-    """Fetch the clab topology artifact + per-PE configs, then deploy."""
-    _banner("invoke lab.deploy", border="cyan")
+@task(
+    name="deploy",
+    help={
+        "branch": "Infrahub branch to deploy from, for example a proposed change's source "
+        "branch (default: main)",
+    },
+)
+def lab_deploy(c: Context, branch: str = "") -> None:
+    """Fetch the clab topology artifact + per-PE configs, then deploy.
+
+    Args:
+        c: Invoke context.
+        branch: Infrahub branch whose artifacts to render and deploy. Empty
+            means the SDK's default branch, normally ``main``. Pass a proposed
+            change's source branch to boot the change in the lab before merging.
+    """
+    branch_arg = f" --branch {shlex.quote(branch)}" if branch else ""
+    _banner(
+        "invoke lab.deploy",
+        body=f"[dim]Infrahub branch:[/dim] {branch or 'main'}",
+        border="cyan",
+    )
     # Before anything else: a host that cannot boot cEOS should find out now,
     # not after re-rendering artifacts and waiting out twelve dying nodes.
     _assert_ceos_runnable(platform.machine(), allow_override=LAB_ALLOW_UNSUPPORTED_ARCH)
@@ -856,14 +881,15 @@ def lab_deploy(c: Context) -> None:
     # `regenerate_artifacts.py` run before the artifact you fetch picks
     # up the new content — easy to forget.
     _step("Regenerating artifacts (template fixes are picked up here)")
-    c.run("uv run python scripts/regenerate_artifacts.py", pty=True)
+    c.run(f"uv run python scripts/regenerate_artifacts.py{branch_arg}", pty=True)
     _success("Artifacts re-rendered")
     _step(f"Fetching clab-mpls-topology → {LAB_TOPO.relative_to(REPO_ROOT)}")
-    _fetch_artifact(c, "clab-mpls-topology", LAB_TOPO)
+    _fetch_artifact(c, "clab-mpls-topology", LAB_TOPO, branch=branch)
     _success("Topology artifact fetched")
     _step(f"Fetching per-PE startup configs → {LAB_DEVICES_DIR.relative_to(REPO_ROOT)}/")
     c.run(
-        f"uv run python scripts/fetch_lab_configs.py --out-dir {shlex.quote(str(LAB_DEVICES_DIR))}",
+        f"uv run python scripts/fetch_lab_configs.py "
+        f"--out-dir {shlex.quote(str(LAB_DEVICES_DIR))}{branch_arg}",
         pty=True,
     )
     _success("Per-PE configs fetched")

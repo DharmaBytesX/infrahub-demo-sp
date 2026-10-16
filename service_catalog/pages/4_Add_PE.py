@@ -194,8 +194,9 @@ if submitted:
     st.success(f"Branch `{branch_name}` opened for {name} with uplinks {', '.join(uplinks)}.")
     st.markdown(
         "**Next step:** review the diff and the validation pipeline in Infrahub, "
-        "then merge the proposed change. After the merge, `uv run invoke lab.deploy` "
-        "boots the new PE in containerlab.\n\n"
+        "then merge the proposed change. To boot the new PE in containerlab before "
+        f"the merge, run `uv run invoke lab.deploy --branch {branch_name}`. After the "
+        "merge, `uv run invoke lab.deploy` boots it from main.\n\n"
         f"- [Open Proposed Change]({ui_url}/proposed-changes/{pc.id})\n"
         f"- [Browse branch in Infrahub]({ui_url}/?branch={branch_name})",
     )

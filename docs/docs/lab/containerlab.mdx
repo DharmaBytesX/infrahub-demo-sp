@@ -182,6 +182,19 @@ See
 uv run invoke lab.deploy
 ```
 
+To boot the lab from a branch instead of `main`, for example the source branch
+of a proposed change, name it with `--branch`:
+
+```bash
+uv run invoke lab.deploy --branch backbone/add-pe-pe-09-a18c2693
+```
+
+Every Infrahub step then reads that branch: the artifacts are re-rendered on
+it, and the topology and the device configurations are fetched from it. This
+is how a change, such as a new PE, is tested in the lab before it is merged.
+The re-render step replaces the branch's artifacts with freshly rendered ones,
+so the proposed change shows new artifact versions afterwards.
+
 Expected output (default **financial** dataset — 8 Arista cEOS PEs, the four
 pre-provisioned Arista cEOS CE routers, and one customer host behind each CE):
 

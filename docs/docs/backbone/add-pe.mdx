@@ -56,8 +56,12 @@ sequenceDiagram
 
 5. **Checks**: the validators listed under [Checks](#checks) must pass.
 
-6. **Merge**: the operator reviews the diff and merges. The new router appears
-   in the lab on the next `invoke lab.deploy`.
+6. **Lab test** (optional): `invoke lab.deploy --branch <branch>` boots the
+   proposed change in the lab before it is merged. See
+   [Boot the new PE in the lab](#boot-the-new-pe-in-the-lab).
+
+7. **Merge**: the operator reviews the diff and merges. The new router appears
+   in the lab built from `main` on the next `invoke lab.deploy`.
 
 ---
 
@@ -103,7 +107,11 @@ definitions already target the groups the device joins.
 
 ---
 
-## After merge: boot the new PE in the lab
+## Boot the new PE in the lab
+
+Before the merge, deploy the proposed change's source branch. The service
+catalog shows the branch name when it opens the proposed change. After the
+merge, run the same command without `--branch` to deploy from `main`.
 
 `invoke lab.deploy` tears the whole lab down and boots every node again:
 containerlab has no way to add a node to a running lab. With nine PEs, allow
@@ -111,7 +119,7 @@ several minutes for EOS to come up, and expect any collector that reads the
 lab by container address to re-discover everything.
 
 ```bash
-uv run invoke lab.deploy
+uv run invoke lab.deploy --branch backbone/add-pe-pe-09-a18c2693
 containerlab exec -t lab/mpls-backbone.clab.yml --label clab-node-name=pe-09 \
   --cmd "show bgp summary"
 containerlab exec -t lab/mpls-backbone.clab.yml --label clab-node-name=pe-09 \
