@@ -99,17 +99,25 @@ def _pe_payload(name: str, device_id: str, *addresses: tuple[str, str]) -> dict:
 @pytest.mark.asyncio
 async def test_backbone_pe_loopbacks_maps_name_to_ids_and_address() -> None:
     payload = {
-        "DcimDevice": {
+        "TopologyMplsBackbone": {
             "edges": [
-                _pe_payload("pe-01", "d1", ("ip1", "10.0.0.1/32")),
-                _pe_payload("pe-02", "d2", ("ip2", "10.0.0.2/32")),
-                _pe_payload("pe-09", "d9"),  # no address yet: skipped
+                {
+                    "node": {
+                        "pes": {
+                            "edges": [
+                                _pe_payload("pe-01", "d1", ("ip1", "10.0.0.1/32")),
+                                _pe_payload("pe-02", "d2", ("ip2", "10.0.0.2/32")),
+                                _pe_payload("pe-09", "d9"),  # no address yet: skipped
+                            ]
+                        }
+                    }
+                }
             ]
         }
     }
     client = MagicMock(execute_graphql=AsyncMock(return_value=payload))
 
-    result = await backbone_pe_loopbacks(client, "b")
+    result = await backbone_pe_loopbacks(client, "b", "bb-1")
 
     assert result == {
         "pe-01": ("d1", "ip1", "10.0.0.1/32"),
@@ -117,3 +125,21 @@ async def test_backbone_pe_loopbacks_maps_name_to_ids_and_address() -> None:
     }
     client.execute_graphql.assert_awaited_once()
     assert client.execute_graphql.await_args.kwargs["branch_name"] == "b"
+
+
+@pytest.mark.asyncio
+async def test_backbone_pe_loopbacks_reads_only_the_requested_backbone() -> None:
+    """The mesh must cover the backbone's `pes`, the list the checks count.
+
+    Reading every `role=pe` device instead built sessions to the PEs of any
+    other backbone, which `pe_onboarding` and `backbone_session_count` never
+    expect.
+    """
+    client = MagicMock(
+        execute_graphql=AsyncMock(return_value={"TopologyMplsBackbone": {"edges": []}})
+    )
+    await backbone_pe_loopbacks(client, "b", "bb-1")
+    kwargs = client.execute_graphql.await_args.kwargs
+    assert kwargs["variables"] == {"backbone": "bb-1"}
+    assert "TopologyMplsBackbone(ids: [$backbone])" in kwargs["query"]
+    assert "DcimDevice(" not in kwargs["query"]

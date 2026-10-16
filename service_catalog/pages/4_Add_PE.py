@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 import time
-import urllib.request
 import uuid
+from urllib.parse import quote
 
+import httpx
 import streamlit as st
+from infrahub_sdk.exceptions import Error as InfrahubSdkError
 from utils import client_for, run_async
 from utils.validators import (
     PE_ONBOARDING_PROGRESS_QUERY,
@@ -164,14 +166,23 @@ if submitted:
 
         # Re-render every artifact on the branch so the proposed change shows the
         # new PE's config, every neighbour's new session and the lab topology.
-        for definition in run_async(client.all(kind="CoreArtifactDefinition")):
-            url = f"{client.address}/api/artifact/generate/{definition.id}?branch={branch_name}"
-            request_obj = urllib.request.Request(
-                url,
-                method="POST",
-                headers={"X-INFRAHUB-KEY": os.environ["INFRAHUB_API_TOKEN"]},
+        # Through the SDK client, so each call has its timeout and the client's
+        # credentials. Not `definition.generate()`: it posts without `?branch=`,
+        # so it would render on main.
+        try:
+            for definition in run_async(client.all(kind="CoreArtifactDefinition")):
+                url = (
+                    f"{client.address}/api/artifact/generate/{definition.id}"
+                    f"?branch={quote(branch_name, safe='')}"
+                )
+                response = run_async(client._post(url=url, payload={"nodes": []}))
+                response.raise_for_status()
+        except (InfrahubSdkError, httpx.HTTPError) as exc:
+            st.error(
+                f"Rendering the artifacts on `{branch_name}` failed, so no proposed change "
+                f"was opened. The branch is preserved for inspection. Error: {exc}"
             )
-            urllib.request.urlopen(request_obj).read()
+            st.stop()
 
         pc = run_async(
             client_main.create(

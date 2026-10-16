@@ -4,7 +4,7 @@ query PeOnboardingCheck($name: String!) {
       node {
         name { value }
         status { value }
-        device { node { name { value } } }
+        device { node { id name { value } } }
         backbone {
           node {
             name { value }
@@ -33,6 +33,7 @@ query PeOnboardingCheck($name: String!) {
       }
     }
   }
+  DcimDevice(name__value: $name) { edges { node { id } } }
   InterfacePhysical(device__name__value: $name, role__value: "core") { count }
   RoutingBGPSession(device__name__value: $name, session_type__value: "INTERNAL") { count }
 }

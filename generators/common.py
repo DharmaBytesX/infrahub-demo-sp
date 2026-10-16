@@ -405,34 +405,48 @@ async def find_or_claim_core_interface(
 async def backbone_pe_loopbacks(
     client: InfrahubClient,
     branch: str,
+    backbone_id: str,
 ) -> dict[str, tuple[str, str, str]]:
-    """Return ``{pe name: (device id, Loopback0 address id, address)}`` for every PE.
+    """Return ``{pe name: (device id, Loopback0 address id, address)}`` for one backbone.
+
+    Only the PEs in the backbone's ``pes`` relationship: the ``pe_onboarding``
+    and ``backbone_session_count`` checks count that relationship, so reading
+    every ``role=pe`` device instead would give the generator a different list
+    from the checks as soon as a second backbone exists.
 
     Read through GraphQL rather than the generator's own query so that query
-    never returns the device the generator creates (see
+    never returns the device the generator creates, which the backbone's
+    ``pes`` will include after the first run (see
     tests/unit/test_catalog/test_pe_generator_registration.py). A PE without a
     Loopback0 address is skipped: the generator cannot peer with it.
 
     Args:
         client: Active Infrahub SDK client.
         branch: Branch to read.
+        backbone_id: Infrahub id of the TopologyMplsBackbone.
 
     Returns:
         Mapping of PE name to its device id, Loopback0 address id and address.
     """
     query = """
-    query PeLoopbacks {
-      DcimDevice(role__value: "pe") {
+    query BackbonePeLoopbacks($backbone: ID!) {
+      TopologyMplsBackbone(ids: [$backbone]) {
         edges {
           node {
-            id
-            name { value }
-            interfaces {
+            pes {
               edges {
                 node {
-                  ... on InterfaceVirtual {
-                    name { value }
-                    ip_addresses { edges { node { id address { value } } } }
+                  id
+                  name { value }
+                  interfaces {
+                    edges {
+                      node {
+                        ... on InterfaceVirtual {
+                          name { value }
+                          ip_addresses { edges { node { id address { value } } } }
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -442,17 +456,24 @@ async def backbone_pe_loopbacks(
       }
     }
     """
-    data = await client.execute_graphql(query=query, branch_name=branch)
+    data = await client.execute_graphql(
+        query=query, variables={"backbone": backbone_id}, branch_name=branch
+    )
     result: dict[str, tuple[str, str, str]] = {}
-    for edge in data["DcimDevice"]["edges"]:
-        node = edge["node"]
-        for if_edge in node["interfaces"]["edges"]:
-            iface = if_edge["node"]
-            if (iface.get("name") or {}).get("value") != "Loopback0":
-                continue
-            addresses = (iface.get("ip_addresses") or {}).get("edges") or []
-            if not addresses:
-                continue
-            address = addresses[0]["node"]
-            result[node["name"]["value"]] = (node["id"], address["id"], address["address"]["value"])
+    for backbone_edge in data["TopologyMplsBackbone"]["edges"]:
+        for edge in backbone_edge["node"]["pes"]["edges"]:
+            node = edge["node"]
+            for if_edge in node["interfaces"]["edges"]:
+                iface = if_edge["node"]
+                if (iface.get("name") or {}).get("value") != "Loopback0":
+                    continue
+                addresses = (iface.get("ip_addresses") or {}).get("edges") or []
+                if not addresses:
+                    continue
+                address = addresses[0]["node"]
+                result[node["name"]["value"]] = (
+                    node["id"],
+                    address["id"],
+                    address["address"]["value"],
+                )
     return result

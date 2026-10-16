@@ -28,6 +28,10 @@ nodes:
         kind: Dropdown
         default_value: "draft"
         order_weight: 1200
+        # No `decommissioned`: nothing decommissions a PE yet. The
+        # pe_onboarding check fails every request that is not `active`, and the
+        # generator would set the request back to `active` on its next run.
+        # Add the choice together with a decommissioning workflow.
         choices:
           - name: draft
             label: Draft
@@ -35,9 +39,6 @@ nodes:
           - name: active
             label: Active
             color: "#A9DFBF"
-          - name: decommissioned
-            label: Decommissioned
-            color: "#D3D3D3"
     relationships:
       - name: backbone
         peer: TopologyMplsBackbone

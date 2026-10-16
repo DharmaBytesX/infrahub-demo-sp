@@ -76,12 +76,15 @@ def _make_gen(
     payload: dict,
     *,
     existing_by_kind: dict[str, list[Any]] | None = None,
+    request_device_id: str | None = None,
 ) -> tuple[PeOnboardingGenerator, MagicMock]:
     """Build a generator with a mocked client.
 
     ``client.filters`` answers per kind from ``existing_by_kind`` (default: nothing
     exists), ``client.create`` returns a fresh node per call that remembers its
-    kwargs, and ``client.get`` returns a node with ``add_relationships``.
+    kwargs, and ``client.get`` returns a node with ``add_relationships``. The
+    fetched request points at ``request_device_id``: ``None`` for a request the
+    generator has not run for yet.
     """
     client = MagicMock()
     client.fetched_nodes = []
@@ -106,6 +109,8 @@ def _make_gen(
     async def _get(**kwargs: Any) -> MagicMock:
         node = _node(id=f"get-{kwargs.get('kind')}-{kwargs.get('name__value') or kwargs.get('id')}")
         node.get_kwargs = kwargs
+        if kwargs.get("kind") == "TopologyPeOnboarding":
+            node.device = MagicMock(id=request_device_id)
         client.fetched_nodes.append(node)
         return node
 
@@ -172,9 +177,14 @@ async def test_first_run_materialises_everything() -> None:
             "generators.generate_pe.find_or_claim_core_interface",
             AsyncMock(side_effect=lambda c, dev, desc, b: claimed[dev]),
         ) as claim,
-        patch("generators.generate_pe.backbone_pe_loopbacks", AsyncMock(return_value=LOOPBACKS)),
+        patch(
+            "generators.generate_pe.backbone_pe_loopbacks", AsyncMock(return_value=LOOPBACKS)
+        ) as loopbacks_of,
     ):
         await gen.generate()
+
+    # The mesh covers the request's backbone only.
+    assert loopbacks_of.await_args.args[1:] == ("backbone/add-pe-09", "bb-1")
 
     # Device: role pe, backbone AS, request's platform / type / site by id.
     devices = _creates(client, "DcimDevice")
@@ -257,10 +267,12 @@ async def test_first_run_materialises_everything() -> None:
     )
 
     # The request is linked to the device and promoted to active.
+    # It is linked as soon as the device exists, so a failed run can resume.
     request_node = fetched[("TopologyPeOnboarding", "req-1")]
     assert request_node.device is client.created_devices[0]
     assert request_node.status.value == "active"
-    request_node.save.assert_awaited_once_with(allow_upsert=True)
+    assert request_node.save.await_count == 2
+    request_node.save.assert_awaited_with(allow_upsert=True)
 
 
 @pytest.mark.asyncio
@@ -276,6 +288,7 @@ async def test_second_run_adopts_existing_nodes_and_resaves_them() -> None:
             "InterfaceVirtual": [loopback_iface],
             "IpamIPAddress": [existing_ip],
         },
+        request_device_id="dev-9",
     )
     with (
         patch(
@@ -351,3 +364,19 @@ async def test_spare_ports_support_services_and_uplinks_and_keep_claims_on_rerun
     assert client.create.await_count == 2
     for port in ports.values():
         port.save.assert_awaited_once_with(allow_upsert=True)
+
+
+@pytest.mark.asyncio
+async def test_a_device_the_request_did_not_create_is_not_taken_over() -> None:
+    """An existing device with the request's name belongs to someone else.
+
+    Adopting it would put it in this generator's tracking group, so deleting
+    the request later would delete that device. The catalog form rejects the
+    name, but a request loaded from YAML is not checked there.
+    """
+    someone_elses = _node(id="dev-existing", name="pe-09")
+    gen, client = _make_gen(_request(), existing_by_kind={"DcimDevice": [someone_elses]})
+    with pytest.raises(RuntimeError, match="already exists and was not created by PE onboarding"):
+        await gen.generate()
+    someone_elses.save.assert_not_awaited()
+    assert _creates(client, "DcimDevice") == []

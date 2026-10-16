@@ -151,7 +151,7 @@ generator writes:
 | `InterfacePhysical` on each uplink PE | 1 each | The lowest `status = free` port, converted to `role = core` and described `To <new PE>` |
 | `IpamIPAddress` | 1 + 4 | The loopback, then both ends of each /31 (new PE even, uplink odd) |
 | `MplsIsisProcess`, `MplsLdpProcess`, `MplsBgpProcess` | 1 each | NET derived from the loopback, for example `10.0.0.9` becomes `49.0001.0100.0000.0009.00` |
-| `RoutingBGPSession` | 2 x N | `<new> to <peer>` on the new PE and `<peer> to <new>` on every other PE |
+| `RoutingBGPSession` | 2 x N | `<new> to <peer>` on the new PE and `<peer> to <new>` on every other PE of the request's backbone |
 | Group membership | `pes`, `pe_<platform>` | So the configuration artifact definitions target the new router |
 | Backbone membership | 1 | The device joins `TopologyMplsBackbone.pes`, so the lab topology includes it |
 
@@ -161,6 +161,13 @@ the new neighbour in its configuration when it holds its own session row.
 
 Rerunning the generator preserves any service or backbone link that has since
 claimed a spare port. It does not reset those ports to `free`.
+
+The generator links the request to the device as soon as it creates it. It
+refuses a request whose name belongs to a device the request does not point
+to, rather than adopting that device: an adopted device would be deleted along
+with the request. The catalog form and `invoke demo-add-device` reject such a
+name before a branch exists. The `pe_onboarding` check reports it for a request
+loaded from YAML or created in the web UI.
 
 No transform or template changes are needed. The containerlab transform
 derives backbone links from the core ports that share a /31, and the artifact
@@ -172,7 +179,7 @@ definitions already target the groups the device joins.
 
 | Check | Target | What it rejects |
 |---|---|---|
-| `pe_onboarding` | `pe_onboardings` | Incomplete generation (status, linked device, backbone membership, core-port and iBGP-session counts), fewer than two distinct uplinks, the router as its own uplink, an uplink that is not a PE of the backbone, or an uplink with no free port left |
+| `pe_onboarding` | `pe_onboardings` | Incomplete generation (status, linked device, backbone membership, core-port and iBGP-session counts), a name already used by a device the request did not create, fewer than two distinct uplinks, the router as its own uplink, an uplink that is not a PE of the backbone, or an uplink with no free port left |
 | `backbone_session_count` | `pes` | Any PE with fewer than N-1 iBGP sessions after the change, which is what a missing reverse session looks like |
 | `batfish_backbone` | `topologies_mpls` | Configurations Batfish cannot parse, IS-IS adjacencies that do not form between the rendered configurations, or incompatible BGP sessions |
 
@@ -211,6 +218,15 @@ docker exec clab-mpls-backbone-1-cust-trading-lon ping -c 3 10.200.40.10   # IB 
 
 ## Known limitations
 
+- **Onboard one PE at a time.** Each request's generator reads only its own
+  branch. When two requests on separate branches name the same uplink, for
+  example `pe-02`, both convert the same free port on it (for example
+  `Ethernet5`) for their own link. On each branch the port is free, so both
+  proposed changes pass their checks. Merging the second one then conflicts,
+  or leaves two /31 addresses on one port. Neither branch creates the iBGP
+  sessions between the two new PEs, because neither PE exists on the other
+  branch. Merge one proposed change before you open the next. If one is
+  already open, delete the second request and open it again after the merge.
 - **Changing a request's uplinks after generation is not supported.** The port
   the generator claimed on an uplink PE belongs to that PE, so the generator
   never un-claims it. Delete the request and open a new branch instead.

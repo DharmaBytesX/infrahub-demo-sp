@@ -126,3 +126,67 @@ def test_completed_generation_opens_proposed_change(
     assert client.execute_graphql.await_count == 2
     ui.stop.assert_not_called()
     ui.success.assert_called_once()
+
+
+def _generation_completed(client: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the generator look finished, so the page goes on to render artifacts."""
+    client.execute_graphql = AsyncMock(
+        return_value={
+            "TopologyPeOnboarding": {
+                "edges": [
+                    {"node": {"status": {"value": "active"}, "device": {"node": {"id": "pe-09"}}}}
+                ]
+            },
+            "InterfacePhysical": {"count": 2},
+            "RoutingBGPSession": {"count": 2},
+        }
+    )
+    monkeypatch.setenv("GENERATOR_WAIT_TIME", "180")
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+
+
+@pytest.fixture
+def two_definitions(page_boundaries: tuple) -> MagicMock:
+    """Serve two artifact definitions, so the page has something to render."""
+    _, client = page_boundaries
+    rows = {
+        "CoreArtifactDefinition": [SimpleNamespace(id="def-1"), SimpleNamespace(id="def-2")],
+    }
+    previous = client.all.side_effect
+    client.all.side_effect = lambda kind: rows.get(kind) or previous(kind)
+    client.address = "http://infrahub:8000"
+    return client
+
+
+def test_artifacts_render_on_the_branch_through_the_sdk_client(
+    page_boundaries: tuple, two_definitions: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each render names the branch and goes through the client, which has a timeout.
+
+    The page used a bare urllib call: no timeout, and a KeyError instead of a
+    page error when INFRAHUB_API_TOKEN was missing.
+    """
+    ui, client = page_boundaries
+    _generation_completed(client, monkeypatch)
+    response = MagicMock()
+    client._post = AsyncMock(return_value=response)
+    runpy.run_path(str(PAGE), run_name="__main__")
+    urls = [call.kwargs["url"] for call in client._post.await_args_list]
+    assert len(urls) == 2
+    assert all("?branch=backbone%2Fadd-pe-pe-09-" in url for url in urls)
+    assert response.raise_for_status.call_count == 2
+    ui.success.assert_called_once()
+
+
+def test_a_failed_render_stops_before_the_proposed_change(
+    page_boundaries: tuple, two_definitions: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ui, client = page_boundaries
+    _generation_completed(client, monkeypatch)
+    from infrahub_sdk.exceptions import ServerNotResponsiveError
+
+    client._post = AsyncMock(side_effect=ServerNotResponsiveError(url="http://infrahub:8000"))
+    with pytest.raises(StopPage):
+        runpy.run_path(str(PAGE), run_name="__main__")
+    assert "CoreProposedChange" not in [c.kwargs["kind"] for c in client.create.await_args_list]
+    assert "branch is preserved" in ui.error.call_args.args[0]

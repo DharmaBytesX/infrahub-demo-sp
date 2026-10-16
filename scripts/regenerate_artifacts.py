@@ -17,10 +17,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import time
-import urllib.request
 from urllib.parse import quote
 
 from infrahub_sdk import Config, InfrahubClientSync
@@ -32,19 +30,19 @@ POLL_INTERVAL_SECONDS = 3
 def _trigger_generate(client: InfrahubClientSync, definition_id: str, branch: str) -> None:
     """POST to Infrahub's artifact-generate endpoint for one definition on ``branch``.
 
-    The endpoint renders on ``main`` unless ``?branch=`` names another branch:
-    the client's default branch does not reach a raw HTTP call. Without the
+    The endpoint renders on ``main`` unless ``?branch=`` names another branch,
+    and the client's default branch does not reach this call. Without the
     parameter, a run against a branch deleted that branch's artifacts and then
-    rendered main's instead.
+    rendered main's instead. ``definition.generate()`` in the SDK posts without
+    the parameter too, so the URL is built here and sent through the client,
+    which adds its credentials and its timeout.
+
+    Raises:
+        httpx.HTTPStatusError: If Infrahub rejects the request.
     """
     url = f"{client.address}/api/artifact/generate/{definition_id}?branch={quote(branch, safe='')}"
-    request = urllib.request.Request(
-        url,
-        method="POST",
-        headers={"X-INFRAHUB-KEY": os.environ["INFRAHUB_API_TOKEN"]},
-    )
-    with urllib.request.urlopen(request) as response:
-        response.read()
+    response = client._post(url=url, payload={"nodes": []})
+    response.raise_for_status()
 
 
 def _delete_existing_artifacts(client: InfrahubClientSync, definition_id: str) -> int:

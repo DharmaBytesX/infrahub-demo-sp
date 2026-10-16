@@ -4,7 +4,7 @@ Runs on every proposed change for each ``TopologyPeOnboarding`` in the
 ``pe_onboardings`` group. The schema already enforces presence and
 uniqueness; what it cannot express is the cross-node shape the generator
 needs: two distinct uplinks, each a PE of the same backbone with a port to
-spare.
+spare, and a name that no other device already uses.
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ class PeOnboardingCheck(InfrahubCheck):
             }
             uplinks = [up["node"] for up in (request.get("uplinks") or {}).get("edges", [])]
             uplink_names = [up["name"]["value"] for up in uplinks]
+            self._validate_name_is_free(request, data)
             self._validate_materialisation(request, backbone_pes, set(uplink_names), data)
 
             if len(set(uplink_names)) < MIN_UPLINKS:
@@ -54,6 +55,26 @@ class PeOnboardingCheck(InfrahubCheck):
                 self.log_error(message=f"{name}: cannot uplink to itself")
             for uplink in uplinks:
                 self._validate_uplink(name, uplink, backbone_name, backbone_pes)
+
+    def _validate_name_is_free(self, request: dict[str, Any], data: dict[str, Any]) -> None:
+        """Reject a request named after a device that the request did not create.
+
+        The generator refuses to adopt such a device, because adopting it would
+        let the generator's cleanup delete it when the request is deleted. The
+        catalog form already rejects the name; this covers requests loaded from
+        YAML or created in the web UI, and says why the generator stopped.
+        """
+        name = request["name"]["value"]
+        own_device_id = ((request.get("device") or {}).get("node") or {}).get("id")
+        for edge in (data.get("DcimDevice") or {}).get("edges", []):
+            if edge["node"]["id"] != own_device_id:
+                self.log_error(
+                    message=(
+                        f"{name}: a device named {name} already exists and was not created by "
+                        "this request; rename the request"
+                    )
+                )
+                return
 
     def _validate_materialisation(
         self,

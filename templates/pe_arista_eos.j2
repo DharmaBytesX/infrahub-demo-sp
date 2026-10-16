@@ -84,9 +84,12 @@ router isis 1
    `mpls ldp`: `interface X` leaves the LDP block for interface X's own config
    mode, so the `no shutdown` after it shut nothing but that interface and LDP
    stayed in its default shutdown state on every PE. LDP runs on each core
-   interface because the interface carries `mpls ip` (rendered above). Verified
-   on a live 9-PE lab: LDP did not start until this block was cut down to the
-   lines below. #}
+   interface because the interface carries `mpls ip` (rendered above).
+   Observed on a 9-PE containerlab lab on cEOS-lab 4.36.0.1F: with the
+   `interface` lines, `show mpls ldp neighbor` printed "LDP is not enabled" on
+   every PE. With the block reduced to the lines below, each core link formed
+   an LDP session (state `oper`) and `ping mpls ldp` to remote loopbacks
+   succeeded. #}
 mpls ldp
    router-id {{ ldp.router_id.value }}
    transport-address interface Loopback0

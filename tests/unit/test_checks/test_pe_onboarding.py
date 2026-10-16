@@ -35,7 +35,7 @@ def _data(name: str = "pe-09", uplinks: list[dict] | None = None, backbone_pes: 
                     "node": {
                         "name": {"value": name},
                         "status": {"value": "active"},
-                        "device": {"node": {"name": {"value": name}}},
+                        "device": {"node": {"id": f"dev-{name}", "name": {"value": name}}},
                         "backbone": {
                             "node": {
                                 "name": {"value": "mpls-backbone-1"},
@@ -52,6 +52,8 @@ def _data(name: str = "pe-09", uplinks: list[dict] | None = None, backbone_pes: 
                 }
             ]
         },
+        # The device the generator created for this request, and no other.
+        "DcimDevice": {"edges": [{"node": {"id": f"dev-{name}"}}]},
         "InterfacePhysical": {"count": len(uplinks or [])},
         "RoutingBGPSession": {"count": len(backbone_pes)},
     }
@@ -149,3 +151,25 @@ async def test_later_core_links_do_not_invalidate_an_existing_request() -> None:
     data = _data(uplinks=[_uplink("pe-02"), _uplink("pe-07")], backbone_pes=("pe-02", "pe-07"))
     data["InterfacePhysical"]["count"] = 3
     assert await _errors(data) == []
+
+
+@pytest.mark.asyncio
+async def test_a_name_taken_by_another_device_fails() -> None:
+    """A request loaded from YAML can name a device that already exists.
+
+    The generator refuses to adopt it, so the request never links a device,
+    and the check says why rather than only that generation is incomplete.
+    """
+    data = _data(uplinks=[_uplink("pe-02"), _uplink("pe-07")], backbone_pes=("pe-02", "pe-07"))
+    request = data["TopologyPeOnboarding"]["edges"][0]["node"]
+    request["device"] = None
+    request["status"] = {"value": "draft"}
+    data["DcimDevice"] = {"edges": [{"node": {"id": "someone-elses"}}]}
+    errors = await _errors(data)
+    assert any("already exists and was not created by this request" in e for e in errors)
+
+
+@pytest.mark.asyncio
+async def test_the_device_the_request_created_does_not_count_as_taken() -> None:
+    data = _data(uplinks=[_uplink("pe-02"), _uplink("pe-07")], backbone_pes=("pe-02", "pe-07"))
+    assert not [e for e in await _errors(data) if "already exists" in e]
